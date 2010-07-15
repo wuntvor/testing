@@ -1,0 +1,32 @@
+set title "Comparison of MPI Implementations using ADCL"
+set xlabel "Timesteps"
+set ylabel "accumulated cpu time"
+set key under
+plot "no-adcl/tstep" using 1:3 with lines, \
+     "SIr_aao/tstep" using 1:3 with lines, \
+"SIr_aao/tstep" using 1:3 with lines, \
+"IsIr_aao_pack/tstep" using 1:3 with lines, \
+"SIr_aao_pack/tstep" using 1:3 with lines, \
+"IsIr_pair/tstep" using 1:3 with lines, \
+"SIr_pair/tstep" using 1:3 with lines, \
+"IsIr_pair_pack/tstep" using 1:3 with lines, \
+"SIr_pair_pack/tstep" using 1:3 with lines, \
+"S_R_pair/tstep" using 1:3 with lines, \
+"Sr_pair/tstep" using 1:3 with lines, \
+"S_R_pair_pack/tstep" using 1:3 with lines, \
+"Sr_pair_pack/tstep" using 1:3 with lines, \
+"brute/tstep" using 1:3 with lines, \
+"hypo/tstep" using 1:3 with lines, \
+"IsIr_aao/tstep" using 1:3 with lines
+
+set terminal png
+set output "output.png"
+replot
+
+
+set size 1.0, 0.6
+set terminal postscript portrait enhanced mono dashed lw 1 "Helvetica" 14
+set output "output.ps"
+replot 
+set terminal x11
+set size 1,1

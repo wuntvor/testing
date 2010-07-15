@@ -1,0 +1,38 @@
+set isosample 40,40
+factor=15.0
+x0=factor*1.0
+y0=0.0
+
+x1=-x0
+y1=0.0
+
+scalefac=3*factor
+
+umax=3.0
+
+set xrange[-scalefac:scalefac]
+set yrange[-scalefac:scalefac]
+
+gamma       = 1.4
+p0          = 1.0
+rho0        = 1.0
+c0          = sqrt(gamma)
+MachRot     = sqrt(gamma)*0.08
+r_0         = 1.0       
+r_c         = 0.30*r_0       
+alpha_vortex= 1.2564310  
+u_0         = umax        
+omega       = 1.0        
+Vortex_Gamma= 4.0*pi/(1.0-exp(-4.0*alpha_vortex/r_c**2)) 
+Vortex_Strength=Vortex_Gamma/2.0/pi
+u_c         = Vortex_Gamma/2.0/pi/r_c *(1.0-exp(-alpha_vortex))
+MachCore    = u_c/c0*MachRot
+pi          = 3.14159265 
+
+splot Vortex_Gamma/2.0/pi/((x-x0)**2+(y-y0)**2)*(1.0-exp(-alpha_vortex*(sqrt((x-x0)**2+(y-y0)**2) /(r_c*factor))**2))*(-y+y0)\
++ Vortex_Gamma/2.0/pi/((x-x1)**2+(y-y1)**2)*(1.0-exp(-alpha_vortex*(sqrt((x-x1)**2+(y-y1)**2) /(factor*r_c))**2))*(-y+y1)
+
+pause -1
+
+splot Vortex_Gamma/2.0/pi/((x-x0)**2+(y-y0)**2)*(1.0-exp(-alpha_vortex*(sqrt((x-x0)**2+(y-y0)**2) /r_c)**2))*(-x+x0)\
++ Vortex_Gamma/2.0/pi/((x-x1)**2+(y-y1)**2)*(1.0-exp(-alpha_vortex*(sqrt((x-x1)**2+(y-y1)**2) /r_c)**2))*(-x+x1)

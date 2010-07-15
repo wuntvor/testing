@@ -1,0 +1,39 @@
+0.001                ! umax (characteristic, maximum speed) umax <= 0.1
+1.800                ! Collision frequency: choose around 1.8 (getting unstable -> 2)
+2000,100,1,1,-10    ! tmax, tOutput, tRamp, tBeginOutput, tInitial (Relaxation with constant u-Field)
+2                    ! problem: 1=cylinder, 2=cavity, 3= , 4=gaussian pulse,7=corotating vortex
+10,10,10             !  domain size: lx,ly,lz
+f                    ! use random obstacles?
+1,1,1                ! number of processes in cartesian direction npx,npy,npz
+t                    ! write binary tecplot file in tOutput intervals
+1.0                  ! Size parameter for Corotating Vortex Pair Test case
+
+! This is the Configuration file for the LBC Lattice Boltzmann Testing Kernel
+! Introduction
+!
+! Line   Pos    Variable      Description
+!   1     1      umax         Characteristic speed, maximum speed
+!   2     1      omega        collision frequency (om = 2/(6nu+1)    
+!   3     1      tMax         Maximum Timestep
+!   3     2      tOutput      Output Interval
+!   3     3      tRamp        umax is ramped up to timestep tRamp
+!   3     4      tBegOut      Begin outputting at timestep tBegOut
+!   3     5      tInitial     Do initial relaxation with fixed u-Field up to timestep tInitial
+!   4     1      Problem      Define which problem to solve
+!                              1   Cylinder in Channel
+!                              2   Lid-driven Cavity, umax is lid speed
+!                              3   
+!                              4   Gaussian Pulse
+!                              5   
+!                              6   
+!                              7   Co-rotating Vortex Pair, umax is velocity at core_radius
+!                              8  
+!                              9   
+!                             10   Flat half-infinite plate
+!                             11   Taylor-vortex
+!   5     1      RandObs      Insert random obstacles? Only valid for lid-driven Cavity
+!   6     1      nProc(1)     How many processes to use in x-direction
+!   6     2      nProc(2)     How many processes to use in y-direction
+!   6     3      nProc(3)     How many processes to use in z-direction
+!   7     1      Output       Write out TecPlot / Whatever Output files
+!   8     1      SizeParam    Size parameter for Corotating Vortex Pair Test case

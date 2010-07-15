@@ -1,0 +1,24 @@
+#!/bin/bash
+#PBS -l nodes=64:ppn=1:nehalem
+#PBS -l walltime=00:10:00
+#PBS -M hasert@hlrs.de
+#PBS -N LBC
+
+NNODES=8
+PES_PER_NODE=1
+MPI_PROCESSES=8
+
+# Make sure that the stacksize is unlimited in all relevant shells
+ulimit -s unlimited
+
+module unload mpi
+module load performance
+
+EXECUTABLE=lbc
+
+cd $PBS_O_WORKDIR
+export VT_GNU_NMFILE=${EXECUTABLE}.sym
+sort -u $PBS_NODEFILE > nodenames
+                      
+mpdboot -n $NNODES -f nodenames -r ssh
+mpiexec -perhost $PES_PER_NODE -genv I_MPI_PIN 0 -np $MPI_PROCESSES ./$EXECUTABLE

@@ -1,0 +1,50 @@
+this file contains configure options and additional information how the library was build
+
+# SX8
+ADCL revision 2924
+sxf90 Rev.360 2006/11/30
+sxcc  Rev.077  2007/09/25
+
+./configure --host=sx8-nec-superux15.1 --with-mpi-dir=/SX/usr/ --with-mpi-cc=sxmpicc --with-mpi-f90=sxmpif90 CFLAGS="-Chopt" FFLAGS="-Chopt -Ep" AR="sxar" --enable-onesided--enable-printf-tofile --disable-knowledge-tofile --with-num-tests=20 --enable-onesided --enable-new-output-format
+
+# Cray XT5m PGI
+# Fortran interface is not working - test-fnctset-extneigh-2d_f crashes2d_f crashes  
+ADCL revision x
+
+modules loaded: pgi/8.0.4                            
+                xt-libsci/10.3.3.7
+                xt-mpt/3.1.2
+                xt-pe/2.2.31A     
+                xt-asyncpe/2.5
+                PrgEnv-pgi/2.2.31A
+
+./configure CC=cc F77=ftn CFLAGS="-fast -fastsse -Minfo,ipa -O4" FFLAGS="-Mpreprocess -fast -fastsse -Minfo,ipa -O4" --with-mpi-bin-dir=/opt/cray/xt-asyncpe/2.5/bin --with-mpi-cc=cc --with-mpi-f90=ftn --enable-onesided--enable-printf-tofile --disable-knowledge-tofile --with-num-tests=20 --enable-onesided --enable-new-output-format
+
+# Nehalem Intel Compiler and OpenMPI
+modules loaded: compiler/intel/11.0
+                mpi/openmpi/1.3-intel-11.0
+export MPI_DIR="/opt/mpi/openmpi/1.3-intel-11.0"
+                
+./configure CFLAGS="-O2" LDFLAGS="-O2" CPPFLAGS="-O2" FFLAGS="-O2 -fpp" --with-mpi-bin-dir="$MPI_DIR/bin" --with-mpi-lib-dir="$MPI_DIR/lib" --with-mpi-include-dir="$MPI_DIR/include" --with-mpi-cc=mpicc --with-mpi-f90=mpif90 --with-num-tests=20 --disable-knowledge-tofile --enable-printf-tofile --enable-onesided --enable-new-output-format --enable-new-output-format
+
+
+# Nehalem Intel Compiler and MVAPICH 
+modules loaded: compiler/intel/11.0
+                mpi/mvapich2
+                
+./configure CFLAGS="-O2" LDFLAGS="-O2" CPPFLAGS="-O2" FFLAGS="-O2 -fpp" --with-mpi-bin-dir=/opt/mpi/mvapich2/1.2p1-intel-11.0/bin --with-mpi-lib-dir=/opt/mpi/mvapich2/1.2p1-intel-11.0/lib --with-mpi-include-dir=/opt/mpi/mvapich2/1.2p1-intel-11.0/include/ --with-mpi-cc=mpicc --with-mpi-f90=mpif90 --with-num-tests=20 --disable-knowledge-tofile --enable-printf-tofile --enable-onesided --enable-new-output-format --enable-new-output-format
+
+# PROFILING --------------------------
+# GNU Compiler 4.1.2 and OpenMPI 1.3 
+modules loaded: mpi/openmpi/1.3-gnu-4.1.2
+export MPI_DIR="/opt/mpi/openmpi/1.3-gnu-4.1.2"
+                
+./configure CFLAGS="-O2 -pg" LDFLAGS="-O2 -pg" CPPFLAGS="-O2 -pg" FFLAGS="-O2 -fpp -pg" --with-mpi-bin-dir="$MPI_DIR/bin" --with-mpi-lib-dir="$MPI_DIR/lib" --with-mpi-include-dir="$MPI_DIR/include" --with-mpi-cc=mpicc --with-mpi-f90=mpif90 --with-num-tests=20 --disable-knowledge-tofile --enable-printf-tofile --enable-new-output-format
+
+
+# VAMPIRTRACE with GNU Compiler 4.1.2 and OpenMPI 1.4 
+modules loaded: mpi/openmpi/1.4-gnu-4.1.2
+               
+export MPI_DIR="/opt/mpi/openmpi/1.4-gnu-4.1.2" 
+./configure CFLAGS="-O2 -pg" LDFLAGS="-O2 -pg" CPPFLAGS="-O2 -pg" FFLAGS="-O2 -fpp -pg" --with-mpi-bin-dir="$MPI_DIR/bin" --with-mpi-lib-dir="$MPI_DIR/lib" --with-mpi-include-dir="$MPI_DIR/include" --with-mpi-cc="vtcc -vt:cc mpicc" --with-mpi-f90="vtf90 -vt:f90 mpif90" --with-num-tests=20 --disable-knowledge-tofile --enable-printf-tofile --enable-new-output-format
+

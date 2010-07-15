@@ -1,0 +1,35 @@
+set hidden3d
+set isosamples 40
+x0=0
+y0=0
+radius=5.
+a=radius*sqrt(2.)
+phi0=1.0
+#set xrange[-50:50]
+#set yrange[-50:50]
+phi0=0.1
+phi1=0.2
+phi2=0.3
+phi3=0.4
+phi4=0.5
+phi5=0.6
+phi6=0.7
+phi7=0.8
+phi8=0.9
+phi9=0.9
+plot 2*(x-x0)/a/a*phi0*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi1*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi2*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi3*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi4*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi5*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi6*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi7*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi8*exp(-((x-x0)*(x-x0))/a/a), \
+2*(x-x0)/a/a*phi9*exp(-((x-x0)*(x-x0))/a/a)
+
+
+
+#splot 2*(x-x0)/a/a*phi0*exp(-((x-x0)*(x-x0)+(y-y0)*(y-y0))/a/a), \
+#-2*(y-y0)/a/a*phi0*exp(-((x-x0)*(x-x0)+(y-y0)*(y-y0))/a/a)
+pause -1
