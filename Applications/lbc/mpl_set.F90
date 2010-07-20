@@ -29,9 +29,9 @@ module mpl_lib
 #ifdef USE_MPI
    integer,parameter :: mpl_proc_null = mpi_proc_null
    integer,parameter :: tag_rho=2
-   integer,parameter :: left_req=1,right_req=2,upper_req=3,lower_req=4,top_req=5,bottom_req=6
-   integer,parameter :: diagxy_req=7,diagyx_req=8,diagyz_req=9,diagzy_req=10,diagxz_req=11,diagzx_req=12
-   integer,parameter :: diagmxy_req=13,diagmyx_req=14,diagmyz_req=15,diagmzy_req=16,diagmxz_req=17,diagmzx_req=18
+!   integer,parameter :: left_req=1,right_req=2,upper_req=3,lower_req=4,top_req=5,bottom_req=6
+!   integer,parameter :: diagxy_req=7,diagyx_req=8,diagyz_req=9,diagzy_req=10,diagxz_req=11,diagzx_req=12
+!   integer,parameter :: diagmxy_req=13,diagmyx_req=14,diagmyz_req=15,diagmzy_req=16,diagmxz_req=17,diagmzx_req=18
 #else 
    integer,parameter :: mpl_proc_null = -2
 #endif
@@ -58,8 +58,26 @@ module mpl_set
 contains
 
 
+   subroutine comm_res(result_state,prc) 
+   !------------------------------------------------------------------------
+   !
+   ! initialize parallel communication
+   !
+      type(mpl_var)   :: prc
+      integer                       :: result_state,tmp
+      integer,dimension(prc%size)   :: result_array
 
+      if(prc%size > 1) then
+#ifdef USE_MPI
+         call mpi_allreduce(result_state,tmp,1,MPI_INTEGER,mpi_min,prc%cart_comm,prc%ierr)
+         result_state=tmp
+#else
+      write(*,*) "result must be comm'ed"
+      stop
+#endif
+      endif
 
+   end subroutine comm_res
 
 
    subroutine mpl_init(meas,prc) 
@@ -260,6 +278,14 @@ subroutine mpl_init_persistent(prc)
    do neighbor = 1,prc%nnghb
       if (prc%nghb(neighbor) /= mpl_proc_null .and. prc%nghb(neighbor) .ge. 0) then 
       counter = counter+1
+#ifdef MPI_SUBARRAY
+      call mpi_recv_init(fIn,1,recv_dat(counter),prc%nghb(counter),mpi_any_tag,      & 
+                     prc%cart_comm,prc%ireq(counter),prc%ierr)
+
+      call mpi_send_init(fIn,1,send_dat(counter),prc%nghb(counter),1,                &
+                     prc%cart_comm,prc%ireq(prc%nnghb_avail+counter),prc%ierr)
+
+#else /* MPI_SUBARRAY */
       call mpi_send_init(mpl_buffer(neighbor)%send,                &
                      prc%length(neighbor),                         & 
                      mpi_double_precision,                         &
@@ -271,7 +297,7 @@ subroutine mpl_init_persistent(prc)
                      mpi_double_precision,                         &
                      prc%nghb(neighbor),mpi_any_tag,               &
                      prc%cart_comm,prc%ireq(counter),prc%ierr)
-
+#endif /* MPI_SUBARRAY */
       endif
    enddo
 #endif /* PERSISTENT */
@@ -406,10 +432,10 @@ subroutine mpl_create_buffers(lb_dom,prc)
    type(lb_block)      :: lb_dom
    type(mpl_var)       :: prc
    integer             :: lx,ly,lz 
-   integer             :: i
+   integer             :: neighbor
    integer             :: subsizes(4)
 #if defined MPI_SUBARRAY
-   integer             :: sizes(4),starts(4),s(3)
+   integer             :: sizes(4),starts(4),s(3),counter
 #endif      
 
       lx = lb_dom%lx(1)
@@ -422,41 +448,51 @@ subroutine mpl_create_buffers(lb_dom,prc)
       ! get the buffer length for each communication buffer     
       prc%length(:) = 0
 
-      do i=1,prc%nnghb
-         prc%length(i) = (prc%pos_send(i,1) - prc%pos_sends(i,1) + 1) &
-                  &    * (prc%pos_send(i,2) - prc%pos_sends(i,2) + 1) &
-                  &    * (prc%pos_send(i,3) - prc%pos_sends(i,3) + 1)
+      do neighbor=1,prc%nnghb
+         prc%length(neighbor) = (prc%pos_send(neighbor,1) - prc%pos_sends(neighbor,1) + 1) &
+                  &    * (prc%pos_send(neighbor,2) - prc%pos_sends(neighbor,2) + 1) &
+                  &    * (prc%pos_send(neighbor,3) - prc%pos_sends(neighbor,3) + 1)
 
-         prc%length_recv(i) = (prc%pos_recv(i,1) - prc%pos_recvs(i,1) + 1) &
-                  &    * (prc%pos_recv(i,2) - prc%pos_recvs(i,2) + 1) &
-                  &    * (prc%pos_recv(i,3) - prc%pos_recvs(i,3) + 1)
+         prc%length_recv(neighbor) = (prc%pos_recv(neighbor,1) - prc%pos_recvs(neighbor,1) + 1) &
+                  &    * (prc%pos_recv(neighbor,2) - prc%pos_recvs(neighbor,2) + 1) &
+                  &    * (prc%pos_recv(neighbor,3) - prc%pos_recvs(neighbor,3) + 1)
       end do
 
 #if defined MPI_SUBARRAY
       ! create the subarray derived mpi type for usage of isend irecv
-   do i=1,prc%nnghb
+   counter=0
+   do neighbor=1,prc%nnghb
       ! receive buffer
-      s(1) = prc%pos_recv(i,1) - prc%pos_recvs(i,1) + 1
-      s(2) = prc%pos_recv(i,2) - prc%pos_recvs(i,2) + 1
-      s(3) = prc%pos_recv(i,3) - prc%pos_recvs(i,3) + 1
-      sizes    = (/LB_NODE(nnod, lx+2, ly+2, lz+2) /)
-      subsizes = (/LB_NODE(nnod, s(1),s(2),s(3)) /) 
-      starts   = (/LB_NODE(0, prc%pos_recvs(i,1), prc%pos_recvs(i,2),prc%pos_recvs(i,3))/)
-      prc%length(i) = subsizes(1)*subsizes(2)*subsizes(3)*subsizes(4)
+#ifdef PERSISTENT2
+      if (prc%nghb(neighbor) /= mpl_proc_null .and. prc%nghb(neighbor) .ge. 0) then 
+      counter = counter+1
+#else
+      counter=neighbor
+#endif
+      s(1) = prc%pos_recv(counter,1) - prc%pos_recvs(counter,1) + 1
+      s(2) = prc%pos_recv(counter,2) - prc%pos_recvs(counter,2) + 1
+      s(3) = prc%pos_recv(counter,3) - prc%pos_recvs(counter,3) + 1
+      sizes    = (/NDX(nnod, lx+2, ly+2, lz+2) /)
+      subsizes = (/NDX(nnod, s(1),s(2),s(3)) /) 
+      starts   = (/NDX(0, prc%pos_recvs(counter,1), prc%pos_recvs(counter,2),prc%pos_recvs(counter,3))/)
+      prc%length(counter) = subsizes(1)*subsizes(2)*subsizes(3)*subsizes(4)
 
       call mpi_type_create_subarray(4,sizes,subsizes,starts,      &
-         &  mpi_order_fortran,mpi_double_precision,recv_dat(i),ierr)
-      call mpi_type_commit(recv_dat(i),ierr)
+         &  mpi_order_fortran,mpi_double_precision,recv_dat(counter),prc%ierr)
+      call mpi_type_commit(recv_dat(counter),prc%ierr)
 
       ! send buffer
-      s(1) = prc%pos_send(i,1) - prc%pos_sends(i,1) + 1
-      s(2) = prc%pos_send(i,2) - prc%pos_sends(i,2) + 1
-      s(3) = prc%pos_send(i,3) - prc%pos_sends(i,3) + 1
-      subsizes = (/LB_NODE(nnod,s(1),s(2),s(3) ) /) 
-      starts   = (/LB_NODE(0, prc%pos_sends(i,1), prc%pos_sends(i,2),prc%pos_sends(i,3))/)
+      s(1) = prc%pos_send(counter,1) - prc%pos_sends(counter,1) + 1
+      s(2) = prc%pos_send(counter,2) - prc%pos_sends(counter,2) + 1
+      s(3) = prc%pos_send(counter,3) - prc%pos_sends(counter,3) + 1
+      subsizes = (/NDX(nnod,s(1),s(2),s(3) ) /) 
+      starts   = (/NDX(0, prc%pos_sends(counter,1), prc%pos_sends(counter,2),prc%pos_sends(counter,3))/)
       call mpi_type_create_subarray(4,sizes,subsizes,starts,&
-         &  mpi_order_fortran,mpi_double_precision,send_dat(i),prc%ierr)
-      call mpi_type_commit(send_dat(i),prc%ierr)
+         &  mpi_order_fortran,mpi_double_precision,send_dat(counter),prc%ierr)
+      call mpi_type_commit(send_dat(counter),prc%ierr)
+#ifdef PERSISTENT2
+   endif
+#endif
 
      end do
 
@@ -465,43 +501,43 @@ subroutine mpl_create_buffers(lb_dom,prc)
    ! This loop identifies, based on the bitmap test of  
    ! which densities to copy into comm buffer
 
-   do i = 1, prc%nnghb
+   do neighbor = 1, prc%nnghb
          
-         subsizes = (/ prc%ndir_pdf(i),                                 & !nnod,&
-                      (prc%pos_recv(i,1) - prc%pos_recvs(i,1) + 1),     &
-                      (prc%pos_recv(i,2) - prc%pos_recvs(i,2) + 1),     &
-                      (prc%pos_recv(i,3) - prc%pos_recvs(i,3) + 1) /) 
-         prc%length(i) = subsizes(1)*subsizes(2)*subsizes(3)*subsizes(4)
+         subsizes = (/ prc%ndir_pdf(neighbor),                                 & !nnod,&
+                      (prc%pos_recv(neighbor,1) - prc%pos_recvs(neighbor,1) + 1),     &
+                      (prc%pos_recv(neighbor,2) - prc%pos_recvs(neighbor,2) + 1),     &
+                      (prc%pos_recv(neighbor,3) - prc%pos_recvs(neighbor,3) + 1) /) 
+         prc%length(neighbor) = subsizes(1)*subsizes(2)*subsizes(3)*subsizes(4)
 
 #if defined USE_CAF 
 #if defined CAF_DER_TYPE
-      allocate(mpl_buffer(i)%send(subsizes(1),subsizes(2),subsizes(3),subsizes(4)))
-      allocate(mpl_buffer(i)%recv(subsizes(1),subsizes(2),subsizes(3),subsizes(4)))
+      allocate(mpl_buffer(neighbor)%send(subsizes(1),subsizes(2),subsizes(3),subsizes(4)))
+      allocate(mpl_buffer(neighbor)%recv(subsizes(1),subsizes(2),subsizes(3),subsizes(4)))
 #else
-      if(i == 1) then
+      if(neighbor == 1) then
       allocate(send1(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
       allocate(recv1(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
-      elseif(i == 2 ) then
+      elseif(neighbor == 2 ) then
       allocate(send2(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
       allocate(recv2(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
-      elseif(i == 3 ) then
+      elseif(neighbor == 3 ) then
       allocate(send3(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
       allocate(recv3(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
-      elseif(i == 4 ) then
+      elseif(neighbor == 4 ) then
       allocate(send4(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
       allocate(recv4(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
-      elseif(i == 5 ) then
+      elseif(neighbor == 5 ) then
       allocate(send5(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
       allocate(recv5(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
-      elseif(i == 6 ) then
+      elseif(neighbor == 6 ) then
       allocate(send6(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
       allocate(recv6(subsizes(1),subsizes(2),subsizes(3),subsizes(4))[*])
       endif
 #endif
 #endif
 #if defined USE_MPI 
-      allocate(mpl_buffer(i)%send(subsizes(1),subsizes(2),subsizes(3),subsizes(4)))
-      allocate(mpl_buffer(i)%recv(subsizes(1),subsizes(2),subsizes(3),subsizes(4)))
+      allocate(mpl_buffer(neighbor)%send(subsizes(1),subsizes(2),subsizes(3),subsizes(4)))
+      allocate(mpl_buffer(neighbor)%recv(subsizes(1),subsizes(2),subsizes(3),subsizes(4)))
 #endif
 
     end do
@@ -679,8 +715,8 @@ do ii=istart,iend
        enddo
 #else
    counter=counter+1
-   prc%dsend_pdf(ind,l)   = ll
-   prc%drecv_pdf(ind,l)   = ll
+   prc%dsend_pdf(ind,ll)   = ll
+   prc%drecv_pdf(ind,ll)   = ll
 #endif /* COMM_REDUCED */
    enddo
    prc%ndir_pdf(ind) = counter
@@ -799,7 +835,7 @@ subroutine mpl_finish(prc)
 ! - buffer arrays are deallocated
 
   type(mpl_var)   :: prc
-  integer        :: ierr,i
+  integer        :: ierr,i,neighbor
 
 
 #ifdef USE_MPI
@@ -814,11 +850,11 @@ subroutine mpl_finish(prc)
    call ADCL_finalize( ierr )
 #endif
 
-#ifdef PERSISTENT
+#if defined(PERSISTENT2)
    ! kill persistent mpi requests
-   do neighbor = 1,prc%nnghb
-!      call mpi_request_free(i_req(neighbor  ),prc%ierr) 
-!      call mpi_request_free(i_req(prc%nnghb+neighbor  ),prc%ierr)
+   do neighbor = 1,prc%nnghb_avail
+      call mpi_request_free(prc%ireq(neighbor  ),prc%ierr) 
+      call mpi_request_free(prc%ireq(prc%nnghb_avail+neighbor  ),prc%ierr)
    enddo
 #endif
 
@@ -912,9 +948,9 @@ end subroutine mpl_finish
       real(R8B)      :: sync_start,sync_end
       real(R8B)      :: copyb_st,copyb_end,copied_amount 
 #ifdef OLD_CAF
-      real(R8B) :: fIn(LB_NODE(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))[prc%np(1),prc%np(2),*]
+      real(R8B) :: fIn(NDX(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))[prc%np(1),prc%np(2),*]
 #else
-      real(R8B) :: fIn(LB_NODE(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
+      real(R8B) :: fIn(NDX(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
 #endif
 
 
@@ -1036,19 +1072,19 @@ stop
                do l = 1,prc%ndir_pdf
 #ifdef CAF_DER_TYPE
                   mpl_buffer(i)%send(l,ii,jj,kk)  =   & 
-fIn(LB_NODE(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
+fIn(NDX(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
 #else
 !send_pnti(l,ii,jj,kk) = &
-!fIn(LB_NODE(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
+!fIn(NDX(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
 if(i==1) then
                   send1(l,ii,jj,kk) = & 
-fIn(LB_NODE(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
+fIn(NDX(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
 elseif(i==3) then
                   send3(l,ii,jj,kk) = & 
-fIn(LB_NODE(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
+fIn(NDX(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
 elseif(i==5) then
                   send5(l,ii,jj,kk) = & 
-fIn(LB_NODE(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
+fIn(NDX(prc%dsend_pdf(i,l),ii+prc%pos_sends(i,1)-1, jj+prc%pos_sends(i,2)-1, kk+prc%pos_sends(i,3)-1))
 endif
 #endif
                  enddo
@@ -1064,19 +1100,19 @@ endif
                do l = 1,prc%ndir_pdf
 #ifdef CAF_DER_TYPE
                   mpl_buffer(next)%send(l,ii,jj,kk) =    & 
-fIn(LB_NODE(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
+fIn(NDX(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
 #else
 !send_pntn(l,ii,jj,kk) = &
-!fIn(LB_NODE(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
+!fIn(NDX(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
 if(i==1) then
                   send2(l,ii,jj,kk) = & 
-fIn(LB_NODE(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
+fIn(NDX(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
 elseif(i==3) then
                   send4(l,ii,jj,kk) = & 
-fIn(LB_NODE(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
+fIn(NDX(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
 elseif(i==5) then
                   send6(l,ii,jj,kk) = & 
-fIn(LB_NODE(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
+fIn(NDX(prc%dsend_pdf(next,l), ii+prc%pos_sends(next,1)-1, jj+prc%pos_sends(next,2)-1, kk+prc%pos_sends(next,3)-1))
 endif
 #endif
                  enddo
@@ -1148,19 +1184,19 @@ endif
             do ii = 1, prc%pos_recv(i,1)-prc%pos_recvs(i,1)+1
                do l = 1,prc%ndir_pdf
 #ifdef CAF_DER_TYPE
-fIn(LB_NODE(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
+fIn(NDX(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
             =  mpl_buffer(i)%recv(l,ii,jj,kk)  
 #else
-!fIn(LB_NODE(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
+!fIn(NDX(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
 !               =  recv_pnti(l,ii,jj,kk) 
 if(i==1) then
-fIn(LB_NODE(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
+fIn(NDX(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
                =  recv1(l,ii,jj,kk) 
 elseif(i==3) then
-fIn(LB_NODE(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
+fIn(NDX(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
                =  recv3(l,ii,jj,kk) 
 elseif(i==5) then
-fIn(LB_NODE(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
+fIn(NDX(prc%drecv_pdf(i,l),ii+prc%pos_recvs(i,1)-1,jj+prc%pos_recvs(i,2)-1, kk+prc%pos_recvs(i,3)-1)) & 
                =  recv5(l,ii,jj,kk) 
 endif
 #endif
@@ -1177,19 +1213,19 @@ endif
             do ii = 1, prc%pos_recv(next,1)-prc%pos_recvs(next,1)+1
                do l = 1,prc%ndir_pdf
 #ifdef CAF_DER_TYPE
-fIn(LB_NODE(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
+fIn(NDX(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
             =  mpl_buffer(next)%recv(l,ii,jj,kk)  
 #else
-!fIn(LB_NODE(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
+!fIn(NDX(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
 !               =  recv_pntn(l,ii,jj,kk) 
 if(i==1) then
-fIn(LB_NODE(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
+fIn(NDX(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
                =  recv2(l,ii,jj,kk) 
 elseif(i==3) then
-fIn(LB_NODE(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
+fIn(NDX(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
                =  recv4(l,ii,jj,kk) 
 elseif(i==5) then
-fIn(LB_NODE(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
+fIn(NDX(prc%drecv_pdf(next,l),ii+prc%pos_recvs(next,1)-1,jj+prc%pos_recvs(next,2)-1, kk+prc%pos_recvs(next,3)-1))   & 
                =  recv6(l,ii,jj,kk) 
 endif
 #endif
@@ -1227,15 +1263,15 @@ endif
 
    if(prc%crd(1) < prc%np(1) - 1) then  ! x+
       call cpu_time_measure(comm_start) 
-      fIn(LB_NODE(1:nnod,lx+1,0:ly+1,0:lz+1))  & 
-    & = fIn(LB_NODE(1:nnod,1,   0:ly+1,0:lz+1)) [prc%crd(1)+1+1,prc%crd(2)+1,prc%crd(3)+1]
+      fIn(NDX(1:nnod,lx+1,0:ly+1,0:lz+1))  & 
+    & = fIn(NDX(1:nnod,1,   0:ly+1,0:lz+1)) [prc%crd(1)+1+1,prc%crd(2)+1,prc%crd(3)+1]
       call cpu_time_measure(comm_end) 
       meas%mpl_exch = meas%mpl_exch + comm_end - comm_start
    end if
    if(prc%crd(1) > 0 ) then             ! x-
       call cpu_time_measure(comm_start) 
-      fIn(LB_NODE(1:nnod,0   ,0:ly+1,0:lz+1))  & 
-      = fIn(LB_NODE(1:nnod,lx,  0:ly+1,0:lz+1))[prc%crd(1)-1 +1,prc%crd(2)+1,prc%crd(3)+1]
+      fIn(NDX(1:nnod,0   ,0:ly+1,0:lz+1))  & 
+      = fIn(NDX(1:nnod,lx,  0:ly+1,0:lz+1))[prc%crd(1)-1 +1,prc%crd(2)+1,prc%crd(3)+1]
       call cpu_time_measure(comm_end) 
       meas%mpl_exch = meas%mpl_exch + comm_end - comm_start
    end if
@@ -1251,15 +1287,15 @@ endif
 
   if(prc%crd(2) < prc%np(2) - 1) then  ! y+
       call cpu_time_measure(comm_start) 
-      fIn(LB_NODE(1:nnod,0:lx+1,ly+1,0:lz+1))  & 
-      = fIn(LB_NODE(1:nnod,0:lx+1,1   ,0:lz+1))[prc%crd(1)+1,prc%crd(2)+1+1,prc%crd(3)+1]
+      fIn(NDX(1:nnod,0:lx+1,ly+1,0:lz+1))  & 
+      = fIn(NDX(1:nnod,0:lx+1,1   ,0:lz+1))[prc%crd(1)+1,prc%crd(2)+1+1,prc%crd(3)+1]
       call cpu_time_measure(comm_end) 
       meas%mpl_exch = meas%mpl_exch + comm_end - comm_start
    end if
    if(prc%crd(2) > 0 ) then            ! y-
       call cpu_time_measure(comm_start) 
-      fIn(LB_NODE(1:nnod,0:lx+1,0,0:lz+1))     & 
-      = fIn(LB_NODE(1:nnod,0:lx+1,ly  ,0:lz+1))[prc%crd(1)+1,prc%crd(2)+1-1,prc%crd(3)+1]
+      fIn(NDX(1:nnod,0:lx+1,0,0:lz+1))     & 
+      = fIn(NDX(1:nnod,0:lx+1,ly  ,0:lz+1))[prc%crd(1)+1,prc%crd(2)+1-1,prc%crd(3)+1]
       call cpu_time_measure(comm_end) 
       meas%mpl_exch = meas%mpl_exch + comm_end - comm_start
    end if
@@ -1274,15 +1310,15 @@ endif
 
    if(prc%crd(3) < prc%np(3) - 1) then  ! z+
       call cpu_time_measure(comm_start) 
-      fIn(LB_NODE(1:nnod,0:lx+1,0:ly+1,lz+1))  & 
-      = fIn(LB_NODE(1:nnod,0:lx+1,0:ly+1,1   ))[prc%crd(1)+1,prc%crd(2)+1,prc%crd(3)+1+1]
+      fIn(NDX(1:nnod,0:lx+1,0:ly+1,lz+1))  & 
+      = fIn(NDX(1:nnod,0:lx+1,0:ly+1,1   ))[prc%crd(1)+1,prc%crd(2)+1,prc%crd(3)+1+1]
       call cpu_time_measure(comm_end) 
       meas%mpl_exch = meas%mpl_exch + comm_end - comm_start
    end if
    if(prc%crd(3) > 0 ) then            ! z-
       call cpu_time_measure(comm_start) 
-      fIn(LB_NODE(1:nnod,0:lx+1,0:ly+1,0))  & 
-     = fIn(LB_NODE(1:nnod,1:lx,1:ly,lz  )) [prc%crd(1)+1,prc%crd(2)+1,prc%crd(3)+1-1]
+      fIn(NDX(1:nnod,0:lx+1,0:ly+1,0))  & 
+     = fIn(NDX(1:nnod,1:lx,1:ly,lz  )) [prc%crd(1)+1,prc%crd(2)+1,prc%crd(3)+1-1]
       call cpu_time_measure(comm_end) 
       meas%mpl_exch = meas%mpl_exch + comm_end - comm_start
    end if
@@ -1338,10 +1374,7 @@ endif
       type(mpl_var)  :: prc
       type(measure)  :: meas
       integer        :: neighbor
-      real(R8B) :: fIn(LB_NODE(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
-
-
-
+      real(R8B) :: fIn(NDX(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
 
 #ifdef SYNCHRONIZE_COMM 
    call mpl_barrier()
@@ -1470,7 +1503,7 @@ stop
       integer,intent(in)  :: neighbor
       integer        :: ii,jj,kk,l
       real(R8B)      :: copy_start,copy_end
-      real(R8B) :: fIn(LB_NODE(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
+      real(R8B) :: fIn(NDX(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
 
 #ifndef MPI_SUBARRAY
 #ifdef DEBUG_MPI
@@ -1492,8 +1525,7 @@ stop
 
 #ifndef DEBUG_MPI
 
-      fIn(LB_NODE(prc%dsend_pdf(neighbor,l),ii+prc%pos_sends(neighbor,1)-1, &
-      jj+prc%pos_sends(neighbor,2)-1, kk+prc%pos_sends(neighbor,3)-1))
+fIn(NDX(prc%dsend_pdf(neighbor,l),ii+prc%pos_sends(neighbor,1)-1, jj+prc%pos_sends(neighbor,2)-1, kk+prc%pos_sends(neighbor,3)-1))
 
 
 #else
@@ -1528,7 +1560,7 @@ stop
       integer,intent(in)  :: neighbor
       integer        :: ii,jj,kk,l
       real(R8B)      :: copy_start,copy_end
-      real(R8B) :: fIn(LB_NODE(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
+      real(R8B) :: fIn(NDX(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
 #ifndef MPI_SUBARRAY
 
 #ifdef DEBUG_MPI
@@ -1547,7 +1579,7 @@ stop
             do ii = 1, prc%pos_recv(neighbor,1)-prc%pos_recvs(neighbor,1)+1
                do l = 1,prc%ndir_pdf(neighbor)
 
-fIn(LB_NODE(prc%drecv_pdf(neighbor,l),ii+prc%pos_recvs(neighbor,1)-1,jj+prc%pos_recvs(neighbor,2)-1, kk+prc%pos_recvs(neighbor,3)-1)) & 
+fIn(NDX(prc%drecv_pdf(neighbor,l),ii+prc%pos_recvs(neighbor,1)-1,jj+prc%pos_recvs(neighbor,2)-1, kk+prc%pos_recvs(neighbor,3)-1)) & 
             =  mpl_buffer(neighbor)%recv(l,ii,jj,kk)  
 
 #ifdef DEBUG_MPI
@@ -1586,7 +1618,7 @@ prc,meas)
       real(R8B)      :: comm_start,comm_end
 #ifdef MPI_SUBARRAY
       type(lb_block),intent(inout) :: lb_dom
-      real(R8B) :: fIn(LB_NODE(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
+      real(R8B) :: fIn(NDX(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
 #endif
 
 
@@ -1655,7 +1687,7 @@ prc,meas)
 
 
 #elif defined MPI_SUBARRAY
-
+#ifndef PERSISTENT2
       call mpi_irecv(   fIn,       & 
                         1,                & 
                         recv_dat(neighbor),      & 
@@ -1664,15 +1696,20 @@ prc,meas)
                         prc%cart_comm,    & 
                         prc%ireq(neighbor),         & 
                         prc%ierr)
+write(*,*) prc%rk,"irecv error    ",prc%ierr 
       if(prc%nghb(neighbor) /= mpl_proc_null) meas%mpl_comm_size   = meas%mpl_comm_size   + real(prc%length(neighbor)*R8B)
 
       call mpi_isend(  fIn,                                                 &
                           1,send_dat(neighbor),prc%nghb(neighbor),1,                   &
                           prc%cart_comm,prc%ireq(prc%nnghb + neighbor),prc%ierr)
+write(*,*) prc%rk,"isend error    ",prc%ierr 
 
+write(*,*) prc%rk,"request handels",prc%ireq 
+write(*,*) prc%rk,"waiting"
       call mpi_wait(prc%ireq(neighbor  ),prc%status(:,neighbor  ),prc%ierr) 
+write(*,*) prc%rk,"waiting"
       call mpi_wait(prc%ireq(prc%nnghb+neighbor),prc%status(:,prc%nnghb+neighbor),prc%ierr)
-
+#endif
 #endif
 
 
@@ -1725,9 +1762,9 @@ prc,meas)
 
 
 
-    allocate(fIn_buf(LB_NODE(nnod,cobnd(1),cobnd(2),cobnd(3)))[prc%np(1),prc%np(2),*])
+    allocate(fIn_buf(NDX(nnod,cobnd(1),cobnd(2),cobnd(3)))[prc%np(1),prc%np(2),*])
     allocate(rho_buf(cobnd(1),cobnd(2),cobnd(3))[prc%np(1),prc%np(2),*])
-    allocate(u_buf(LB_NODE(NDIM,cobnd(1),cobnd(2),cobnd(3)))[prc%np(1),prc%np(2),*])
+    allocate(u_buf(NDX(NDIM,cobnd(1),cobnd(2),cobnd(3)))[prc%np(1),prc%np(2),*])
     allocate(state_buf(cobnd(1),cobnd(2),cobnd(3))[prc%np(1),prc%np(2),*])
     allocate(omega_buf(cobnd(1),cobnd(2),cobnd(3))[prc%np(1),prc%np(2),*])
 #endif 
@@ -1758,15 +1795,15 @@ prc,meas)
                      &        prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), &
                      &        prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2))
 
-                   lb_dom%u(LB_NODE(:,1:lx,1:ly,1:lz))&
+                   lb_dom%u(NDX(:,1:lx,1:ly,1:lz))&
                      & = lb_dom%gu( & 
-LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3)))
-!&LB_NODE(1:NDIM,prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2),prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2),prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)))
+NDX(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3)))
+!&NDX(1:NDIM,prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2),prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2),prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)))
 
-                  lb_dom%fIn(LB_NODE(:,1:lx,1:ly,1:lz))&
+                  lb_dom%fIn(NDX(:,1:lx,1:ly,1:lz))&
                      & = lb_dom%gfIn( & 
-LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3)))
-!&LB_NODE(1:nnod,prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2),prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)))
+NDX(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3)))
+!&NDX(1:nnod,prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2),prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)))
 
                    lb_dom%state(1:lx,1:ly,1:lz)&
                      & = lb_dom%gstate(prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), & 
@@ -1789,9 +1826,9 @@ LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3
                 call MPI_CART_RANK(prc%cart_comm,crd_array,target_rank,prc%ierr)
                 call MPI_SEND(lb_dom%grho(b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3)),length, & 
                            &  mpi_double_precision,target_rank,tag_rho,prc%cart_comm,prc%ierr)
-                call MPI_SEND(lb_dom%gu(LB_NODE(1:NDIM,b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3))),length*NDIM,&
+                call MPI_SEND(lb_dom%gu(NDX(1:NDIM,b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3))),length*NDIM,&
                           &  mpi_double_precision,target_rank,tag_rho,prc%cart_comm,prc%ierr)
-                call MPI_SEND(lb_dom%gfIn(LB_NODE(1:nnod,b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3))),length*nnod,&
+                call MPI_SEND(lb_dom%gfIn(NDX(1:nnod,b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3))),length*nnod,&
                            &  mpi_double_precision,target_rank,tag_rho,prc%cart_comm,prc%ierr)
                 call MPI_SEND(lb_dom%gstate(b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3)),length,MPI_INTEGER,&
                            &  target_rank,tag_rho,prc%cart_comm,prc%ierr)
@@ -1806,15 +1843,15 @@ LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3
                      &        prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), &
                      &        prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2))
 
-                   fIn_buf(LB_NODE(1:nnod,1:lx,1:ly,1:lz))[i,j,k]&
+                   fIn_buf(NDX(1:nnod,1:lx,1:ly,1:lz))[i,j,k]&
                      & = lb_dom%gfIn( & 
-LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3)))
-!& LB_NODE(1:nnod,prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2),prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)))
+NDX(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3)))
+!& NDX(1:nnod,prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2),prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)))
 
-                   u_buf(LB_NODE(1:NDIM,1:lx,1:ly,1:lz))[i,j,k]&
+                   u_buf(NDX(1:NDIM,1:lx,1:ly,1:lz))[i,j,k]&
                      & = lb_dom%gu( & 
-LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3)))
-!& LB_NODE(1:NDIM,prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2),prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)))
+NDX(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3)))
+!& NDX(1:NDIM,prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2),prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)))
 
                    state_buf(1:lx,1:ly,1:lz)[i,j,k]&
                      & = lb_dom%gstate(prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), & 
@@ -1844,9 +1881,9 @@ LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3
        
        call MPI_RECV(       lb_dom%rho(1:ul(1),1:ul(2),1:ul(3)),length,mpi_double_precision,&
                         &  prc%root_th,tag_rho,prc%cart_comm,prc%stat,prc%ierr)
-       call MPI_RECV(  lb_dom%u(LB_NODE(1:NDIM,1:ul(1),1:ul(2),1:ul(3))),length*NDIM,mpi_double_precision,&
+       call MPI_RECV(  lb_dom%u(NDX(1:NDIM,1:ul(1),1:ul(2),1:ul(3))),length*NDIM,mpi_double_precision,&
                         &  prc%root_th,tag_rho,prc%cart_comm,prc%stat,prc%ierr)
-       call MPI_RECV(lb_dom%fIn(LB_NODE(1:nnod,1:ul(1),1:ul(2),1:ul(3))),length*nnod,mpi_double_precision,&
+       call MPI_RECV(lb_dom%fIn(NDX(1:nnod,1:ul(1),1:ul(2),1:ul(3))),length*nnod,mpi_double_precision,&
                         &  prc%root_th,tag_rho,prc%cart_comm,prc%stat,prc%ierr)
        call MPI_RECV(     lb_dom%state(1:ul(1),1:ul(2),1:ul(3)),length,MPI_INTEGER,&
                         &  prc%root_th,tag_rho,prc%cart_comm,prc%stat,prc%ierr)
@@ -1860,8 +1897,8 @@ LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3
    call sync_images(g_team)
    if (prc%rk /= 0 ) then ! copy from coarrays to local arrays
       lb_dom%rho(1:lx,1:ly,1:lz)        = rho_buf(1:lx,1:ly,1:lz)
-      lb_dom%u(LB_NODE(1:NDIM,1:lx,1:ly,1:lz))   = u_buf(LB_NODE(1:NDIM,1:lx,1:ly,1:lz))
-      lb_dom%fIn(LB_NODE(1:nnod,1:lx,1:ly,1:lz)) = fIn_buf(LB_NODE(1:nnod,1:lx,1:ly,1:lz))
+      lb_dom%u(NDX(1:NDIM,1:lx,1:ly,1:lz))   = u_buf(NDX(1:NDIM,1:lx,1:ly,1:lz))
+      lb_dom%fIn(NDX(1:nnod,1:lx,1:ly,1:lz)) = fIn_buf(NDX(1:nnod,1:lx,1:ly,1:lz))
       lb_dom%state(1:lx,1:ly,1:lz)      = state_buf(1:lx,1:ly,1:lz)
 #ifdef SPONGE
       lb_dom%omega(1:lx,1:ly,1:lz)      = omega_buf(1:lx,1:ly,1:lz)

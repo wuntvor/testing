@@ -15,7 +15,7 @@ subroutine dump_matrix(matrix,lb_dom,prc,s_par,description,tstep)
 
 
    type(lb_block),intent(in)       :: lb_dom
-   real(R8B) :: matrix(LB_NODE(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
+   real(R8B) :: matrix(NDX(nnod,0:lb_dom%lx(1)+1,0:lb_dom%lx(2)+1,0:lb_dom%lx(3)+1))
    type(sim_parameter),intent(in)  :: s_par
    type(mpl_var)      :: prc
    integer,intent(in) :: tstep
@@ -34,7 +34,7 @@ subroutine dump_matrix(matrix,lb_dom,prc,s_par,description,tstep)
    do j=0,lb_dom%lx(2)
    do i=0,lb_dom%lx(1)
    do l=1,nnod
-      write(71,'(5i3,f11.6)') tstep,i,j,k,l,matrix(LB_NODE(l,i,j,k))
+      write(71,'(5i3,f11.6)') tstep,i,j,k,l,matrix(NDX(l,i,j,k))
    enddo
    enddo
    enddo
@@ -64,6 +64,8 @@ subroutine gather_output(lb_dom,countOut,tStep,s_par,prc)
    type(mpl_var)      :: prc
    integer :: countOut,tStep
    integer :: lx,ly,lz
+   integer,parameter :: tagrho=101,tagu=102,tagomega=103,tagstate=104 
+   integer,parameter :: tagrho_inc=105
    integer :: b_l(3),b_u(3)
 #ifdef INIT_WITH_ROOT
    integer :: length
@@ -88,11 +90,11 @@ subroutine gather_output(lb_dom,countOut,tStep,s_par,prc)
 #ifdef INIT_WITH_ROOT
 #ifdef USE_CAF
    allocate(rho_buf(cobnd(1),cobnd(2),cobnd(3))[prc%np(1),prc%np(2),*])
-   allocate(u_buf(LB_NODE(NDIM,cobnd(1),cobnd(2),cobnd(3)))[prc%np(1),prc%np(2),*])
+   allocate(u_buf(NDX(NDIM,cobnd(1),cobnd(2),cobnd(3)))[prc%np(1),prc%np(2),*])
    allocate(state_buf(cobnd(1),cobnd(2),cobnd(3))[prc%np(1),prc%np(2),*])
    ! for caf worker threads: have to copy local data to buffers
     if (prc%rk /= 0 ) then ! copy local arrays to coarray buffers
-      u_buf(LB_NODE(1:NDIM,1:lx,1:ly,1:lz))   = lb_dom%u(LB_NODE(1:NDIM,1:lx,1:ly,1:lz))
+      u_buf(NDX(1:NDIM,1:lx,1:ly,1:lz))   = lb_dom%u(NDX(1:NDIM,1:lx,1:ly,1:lz))
       state_buf(1:lx,1:ly,1:lz)      = lb_dom%state(1:lx,1:ly,1:lz)
       rho_buf(1:lx,1:ly,1:lz)      = lb_dom%rho(1:lx,1:ly,1:lz)
    end if
@@ -124,15 +126,21 @@ subroutine gather_output(lb_dom,countOut,tStep,s_par,prc)
                      &  = lb_dom%rho(1:lx,1:ly, 1:lz)
 
                lb_dom%gu(&
-               LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3))) &
-                       = lb_dom%u(LB_NODE(:,1:lx,1:ly,1:lz))
+               NDX(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3))) &
+                       = lb_dom%u(NDX(:,1:lx,1:ly,1:lz))
 
-#ifdef SPONGE1
+#ifdef SPONGE
                  lb_dom%gomega(prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), & 
                      &        prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), &
                      &        prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)) &
                      & =  lb_dom%omega(1:lx,1:ly,1:lz)
-#endif /* SPONGE1 */
+#endif /* SPONGE */
+#ifdef CRVP  
+                 lb_dom%grho_inc(prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), & 
+                     &        prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), &
+                     &        prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)) &
+                     & =  lb_dom%rho_inc(1:lx,1:ly,1:lz)
+#endif /* CRVP   */
                  lb_dom%gstate(prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), & 
                      &        prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), &
                      &        prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)) &
@@ -144,35 +152,36 @@ subroutine gather_output(lb_dom,countOut,tStep,s_par,prc)
                 else ! if master thread's loop is at another crd than 0,0,0 -> recv from other threads 
 #ifdef USE_MPI
                 call MPI_CART_RANK(prc%cart_comm,(/(i-1),(j-1),(k-1)/),target_rank,prc%ierr)
-                call MPI_RECV(lb_dom%gu(LB_NODE(1:NDIM,b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3))),&
+                call MPI_RECV(lb_dom%gu(NDX(1:NDIM,b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3))),&
                                     length*NDIM,MPI_DOUBLE_PRECISION,&
-                                    target_rank,tag_rho,prc%cart_comm,prc%stat,prc%ierr)
+                                    target_rank,tagu,prc%cart_comm,prc%stat,prc%ierr)
                 call MPI_RECV(lb_dom%grho(b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3)),length,mpi_double_precision,&
-                                    target_rank,tag_rho,prc%cart_comm,prc%stat,prc%ierr)
+                                    target_rank,tagrho,prc%cart_comm,prc%stat,prc%ierr)
                 call MPI_RECV(lb_dom%gstate(b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3)),length,MPI_INTEGER,&
-                                    target_rank,tag_rho,prc%cart_comm,prc%stat,prc%ierr)
-#ifdef SPONGE1
+                                    target_rank,tagstate,prc%cart_comm,prc%stat,prc%ierr)
+#ifdef CRVP
+                call MPI_RECV(lb_dom%grho_inc(b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3)),length,mpi_double_precision,&
+                                    target_rank,tagrho_inc,prc%cart_comm,prc%stat,prc%ierr)
+#endif /* CRVP */
+#ifdef SPONGE
                 call MPI_RECV(lb_dom%gomega(b_l(1):b_u(1),b_l(2):b_u(2),b_l(3):b_u(3)),length,mpi_double_precision,&
-                                    target_rank,tag_rho,prc%cart_comm,prc%stat,prc%ierr)
-#endif /* SPONGE1 */
+                                    target_rank,tagomega,prc%cart_comm,prc%stat,prc%ierr)
+#endif /* SPONGE */
 #endif /* USE_MPI */
 #ifdef USE_CAF
                 lb_dom%gu(&
-            LB_NODE(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3))) &
-                       =     u_buf(LB_NODE(:,1:lx,1:ly,1:lz))[i,j,k]
+            NDX(:,ab(i,j,k,1):ae(i,j,k,1),ab(i,j,k,2):ae(i,j,k,2),ab(i,j,k,3):ae(i,j,k,3))) &
+                       =     u_buf(NDX(:,1:lx,1:ly,1:lz))[i,j,k]
 
                  lb_dom%grho(prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), & 
                               prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), &
                               prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)) &
                        =      rho_buf(1:lx,1:ly,1:lz)[i,j,k]
 
-
                  lb_dom%gstate(prc%bnd(i,j,k,1,1):prc%bnd(i,j,k,1,2), & 
                               prc%bnd(i,j,k,2,1):prc%bnd(i,j,k,2,2), &
                               prc%bnd(i,j,k,3,1):prc%bnd(i,j,k,3,2)) &
                        =      state_buf(1:lx,1:ly,1:lz)[i,j,k]
-
-
 #endif 
                 end if
             end do  
@@ -186,16 +195,20 @@ subroutine gather_output(lb_dom,countOut,tStep,s_par,prc)
        ! all other threads: 
        ! wait until mpi_recv is done
       length = lx*ly*lz !(b_u(1)-b_l(1) + 1) * (b_u(2)-b_l(2)+1) * (b_u(3)-b_l(3)+1)
-      call MPI_SEND(lb_dom%u(LB_NODE(1:NDIM,1:lx,1:ly,1:lz)),length*NDIM,           &
-                     MPI_DOUBLE_PRECISION,prc%root_th,tag_rho,prc%cart_comm,prc%ierr)
+      call MPI_SEND(lb_dom%u(NDX(1:NDIM,1:lx,1:ly,1:lz)),length*NDIM,           &
+                     MPI_DOUBLE_PRECISION,prc%root_th,tagu,prc%cart_comm,prc%ierr)
       call MPI_SEND(lb_dom%rho(1:lx,1:ly,1:lz),length,                              &
-                     MPI_DOUBLE_PRECISION,prc%root_th,tag_rho,prc%cart_comm,prc%ierr)
+                     MPI_DOUBLE_PRECISION,prc%root_th,tagrho,prc%cart_comm,prc%ierr)
       call MPI_SEND(lb_dom%state(1:lx,1:ly,1:lz),length,MPI_INTEGER,                &
-                     prc%root_th,tag_rho,prc%cart_comm,prc%ierr)
-#ifdef SPONGE1
+                     prc%root_th,tagstate,prc%cart_comm,prc%ierr)
+#ifdef CRVP
+      call MPI_SEND(lb_dom%rho_inc(1:lx,1:ly,1:lz),length,mpi_double_precision,       &
+                     prc%root_th,tagrho_inc,prc%cart_comm,prc%ierr)
+#endif /* CRVP */
+#ifdef SPONGE
       call MPI_SEND(lb_dom%omega(1:lx,1:ly,1:lz),length,mpi_double_precision,       &
-                     prc%root_th,tag_rho,prc%cart_comm,prc%ierr)
-#endif /* SPONGE1 */
+                     prc%root_th,tagomega,prc%cart_comm,prc%ierr)
+#endif /* SPONGE */
 #endif /* USE_MPI */
    end if
 #ifdef USE_CAF
@@ -237,7 +250,7 @@ subroutine write_tec_output(lb_dom,countOut,tstep,s_par,prc)
    Integer IMax,JMax,KMax
    character*1 NULLCHR
    Integer   Debug,III   !,NPts,NElm
-   real(R4B),allocatable :: X(:,:,:), Y(:,:,:), Z(:,:,:), P(:,:,:)
+   real(R4B),allocatable :: X(:,:,:), Y(:,:,:), Z(:,:,:)
    Real(R8B)    SolTime,offx(3)
    Integer VIsDouble, FileType
    Integer ZoneType,StrandID,ParentZn,IsBlock
@@ -271,9 +284,7 @@ subroutine write_tec_output(lb_dom,countOut,tstep,s_par,prc)
       IMax    = lb_dom%lx(1)
       JMax    = lb_dom%lx(2)
       KMax    = lb_dom%lx(3)
-      offx(1) = prc%crd(1)*real(lb_dom%lx(1))
-      offx(2) = prc%crd(2)*real(lb_dom%lx(2))
-      offx(3) = prc%crd(3)*real(lb_dom%lx(3))
+      offx(:) = prc%crd(:)*real(lb_dom%lx(:))
 #endif
 
       ZoneType = 0
@@ -290,7 +301,6 @@ subroutine write_tec_output(lb_dom,countOut,tstep,s_par,prc)
       allocate(X(IMax,JMax,KMax))
       allocate(Y(IMax,JMax,KMax))
       allocate(Z(IMax,JMax,KMax))
-      allocate(P(IMax,JMax,KMax))
 
 
 
@@ -352,22 +362,6 @@ endif
             X(i,j,k)=real(i,4)+offx(1)
             Y(i,j,k)=real(j,4)+offx(2)
             Z(i,j,k)=real(k,4)+offx(3)
-#ifdef INIT_WITH_ROOT
-#ifdef D2Q9
-            P(i,j,k)=real(lb_dom%gu(LB_NODE(1,i,j,k))**2 + lb_dom%gu(LB_NODE(2,i,j,k))**2 ,4)
-#endif
-#ifdef D3Q19
-            P(i,j,k)=real(lb_dom%gu(LB_NODE(1,i,j,k))**2 + lb_dom%gu(LB_NODE(2,i,j,k))**2 +lb_dom%gu(LB_NODE(3,i,j,k))**2     ,4)
-#endif
-
-#else /* INIT_WITH_ROOT */
-#ifdef D2Q9
-            P(i,j,k)=real(lb_dom%u(LB_NODE(1,i,j,k))**2 + lb_dom%u(LB_NODE(2,i,j,k))**2 ,4)
-#endif
-#ifdef D3Q19
-            P(i,j,k)=real(lb_dom%u(LB_NODE(1,i,j,k))**2 + lb_dom%u(LB_NODE(2,i,j,k))**2 +lb_dom%u(LB_NODE(3,i,j,k))**2     ,4)
-#endif
-#endif /* INIT_WITH_ROOT */
          enddo
       enddo
    enddo
@@ -375,32 +369,43 @@ endif
       I   = TecDat112(III,X,0)
       I   = TecDat112(III,Y,0)
       I   = TecDat112(III,Z,0)
-!      I   = TecDat112(III,P,0)
 #ifdef INIT_WITH_ROOT
+#ifdef CRVP
+      I   = TecDat112(III,real(lb_dom%grho(1:IMax,1:JMax,1:KMax)&
+                          -lb_dom%grho_inc(1:IMax,1:JMax,1:KMax),4),0)
+#else /* CRVP */ 
       I   = TecDat112(III,real(lb_dom%grho(1:IMax,1:JMax,1:KMax),4),0)
-      I   = TecDat112(III,real(lb_dom%gu(LB_NODE(1,1:IMax,1:JMax,1:KMax)),4),0)
-      I   = TecDat112(III,real(lb_dom%gu(LB_NODE(2,1:IMax,1:JMax,1:KMax)),4),0)
+#endif /* CRVP */ 
+      I   = TecDat112(III,real(lb_dom%gu(NDX(1,1:IMax,1:JMax,1:KMax)),4),0)
+      I   = TecDat112(III,real(lb_dom%gu(NDX(2,1:IMax,1:JMax,1:KMax)),4),0)
 #ifdef D3Q19
-      I   = TecDat112(III,real(lb_dom%gu(LB_NODE(3,1:IMax,1:JMax,1:KMax)),4),0)
+      I   = TecDat112(III,real(lb_dom%gu(NDX(3,1:IMax,1:JMax,1:KMax)),4),0)
 #endif
 #ifdef SPONGE
      I   = TecDat112(III,real(lb_dom%gomega(1:IMax,1:JMax,1:KMax),4),0)
 #else
      I   = TecDat112(III,real(lb_dom%gstate(1:IMax,1:JMax,1:KMax),4),0)
 #endif /* SPONGE */
-#else
+#else /* INIT_WITH_ROOT */
+#ifdef CRVP
+      I   = TecDat112(III,real(lb_dom%rho(1:IMax,1:JMax,1:KMax)&
+                          -lb_dom%rho_inc(1:IMax,1:JMax,1:KMax),4),0)
+#else /* CRVP */ 
       I   = TecDat112(III,real(lb_dom%rho(1:IMax,1:JMax,1:KMax),4),0)
-      I   = TecDat112(III,real(lb_dom%u(LB_NODE(1,1:IMax,1:JMax,1:KMax)),4),0)
-      I   = TecDat112(III,real(lb_dom%u(LB_NODE(2,1:IMax,1:JMax,1:KMax)),4),0)
+#endif /* CRVP */ 
+      I   = TecDat112(III,real(lb_dom%u(NDX(1,1:IMax,1:JMax,1:KMax)),4),0)
+      I   = TecDat112(III,real(lb_dom%u(NDX(2,1:IMax,1:JMax,1:KMax)),4),0)
 #ifdef D3Q19
-      I   = TecDat112(III,real(lb_dom%u(LB_NODE(3,1:IMax,1:JMax,1:KMax)),4),0)
+      I   = TecDat112(III,real(lb_dom%u(NDX(3,1:IMax,1:JMax,1:KMax)),4),0)
 #endif
+#ifdef SPONGE
+     I   = TecDat112(III,real(lb_dom%omega(1:IMax,1:JMax,1:KMax),4),0)
+#else
      I   = TecDat112(III,real(lb_dom%state(1:IMax,1:JMax,1:KMax),4),0)
-!     I   = TecDat112(III,real(lb_dom%omega(1:IMax,1:JMax,1:KMax),4),0)
+#endif /* SPONGE */
 #endif /* INIT_WITH_ROOT */
       deallocate(Y)
       deallocate(Z)
-      deallocate(P)
 
 if(s_par%goend .eqv. .true.) then
       I = TecEnd112()
@@ -447,8 +452,12 @@ end subroutine
       s_par%rho0 = 1.0d0 
 
       s_par%goend        = .false.
+      s_par%setObstacles = .false.
+      s_par%read_obs     = .false.
+      s_par%periodic     = .false.
       s_par%initial      = .false.
-      s_par%comm_method =  ""//&
+      s_par%calc_rho_inc = .false.
+      s_par%comm_method  =  ""//&
 #if defined SENDRECV_BUF
      "sendrecv_buf" &
 #elif defined ISEND_IRECV_BUF
@@ -497,6 +506,9 @@ end subroutine
 #ifdef SPONGE
       s_par%modelname = "spg_"//s_par%modelname
 #endif
+#ifdef INCOMPRESSIBLE
+      s_par%modelname = "inc_"//s_par%modelname
+#endif
 #if defined LAYOUT_LIJK
       s_par%layoutname = "lijk"
 #elif defined LAYOUT_IJKL
@@ -524,10 +536,19 @@ end subroutine
          read(1,*) s_par%problem                            
 ! problem: 1 cylinder in channel, 2 cavity, 3 shock,gaussian=4, cavity_same=5 
          read(1,*) s_par%gx(1),s_par%gx(2),s_par%gx(3)      ! global domain size x, y, z
-         read(1,*) s_par%setObstacles                       ! set additional obstacles in domain t / f
+         read(1,*) s_par%periodic(1),s_par%periodic(2),s_par%periodic(3) ! periodic settings
          read(1,*) prc%np(1),prc%np(2),prc%np(3)            ! # processes in each direction
          read(1,*) s_par%save_output                        ! save output t / f
          read(1,*) s_par%obst_l                             ! Additional obstacle Parameter. For CRVP: Distance of vortices 
+         read(1,*) s_par%read_obs                           ! Read obstacles from lbc.obs file??
+#ifdef MRT
+         read(1,*) s_par%bulkViscosity                      ! 
+           
+         if(s_par%bulkViscosity < 0.000001) then
+            s_par%bulkViscosity = 2.d0/9.d0*(1.d0/s_par%omega-0.5d0)
+            write(*,*) "MRT: Setting bulk Viscosity to standard value of bgk: ",s_par%bulkViscosity
+         endif
+#endif /* MRT */
          close(1)
 
       !------------------------------------
@@ -546,7 +567,7 @@ end subroutine
          s_par%obst_y=s_par%gx(2)/4-s_par%obst_r
          s_par%obst_z=0
          elseif(s_par%problem==corotating_vortex) then
-         s_par%obst_r = s_par%gx(1)/100+1
+         s_par%obst_r = s_par%gx(1)/100*s_par%obst_l+1
          elseif(s_par%problem==gaussian .or. s_par%problem==gauss_convect) then
             if(s_par%obst_l < 1.0) then
                s_par%obst_r = s_par%gx(1)/100 +1
@@ -554,6 +575,7 @@ end subroutine
                s_par%obst_r = int(s_par%obst_l) 
             endif
          endif    
+
      ! Set sponge layer thickness
          s_par%sponge_size = 20
  
@@ -637,13 +659,17 @@ end subroutine
          write(*,*) "Relaxation is: ", &
 #ifdef MRT
 "mrt"
-#else
+         write(*,*) "Bulk relaxation rate: ",2.0_R8B/(9.0_R8B * s_par%bulkViscosity + 1.0_R8B)
+#else /* MRT > TRT/BGK */
 #ifdef TRT
 "trt"
-#else
+#else /* TRT > BGK */
 "bgk"
-#endif
-#endif
+#endif /* TRT */
+#endif /* MRT */
+#ifdef LES_SMAGORINSKY
+         write(*,*) "Turbulence Model: LES-Smagorinsky"
+#endif /* LES_SMAGORINSKY */
 
          write(*,*) "----------------------------------------------"
          write(*,*) 
@@ -661,6 +687,7 @@ end subroutine
 
    call MPI_BCAST(prc%np,3,MPI_INTEGER,0,MPI_COMM_WORLD,prc%ierr)
    call MPI_BCAST(s_par%omega,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,prc%ierr)
+   call MPI_BCAST(s_par%bulkViscosity,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,prc%ierr)
    call MPI_BCAST(s_par%nu,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,prc%ierr)
    call MPI_BCAST(s_par%Re,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,prc%ierr)
    call MPI_BCAST(s_par%umax,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,prc%ierr)
@@ -707,14 +734,14 @@ subroutine write_performance_results(result_state,s_par,prc,meas)
   inquire(file=filename,exist=file_exists)
   open(11,file=filename,position='append') !TRIM(ADJUSTL(filename)))
   if(file_exists .EQV. .false.) then
-     write(11,*) '#loglx*ly*lz lx*ly*lz MLUPs  lx   ly   lz   nprc  tTot   tComm  %Comm mpi_meth    layo  resok'
+     write(11,*) '#loglx*ly*lz lx*ly*lz MLUPs  lx   ly   lz   nprc  tTot   tComm  %Comm mpi_meth    layo  resok om bulk umax'
   end if
    lxyztot = s_par%gx(1)*s_par%gx(2)*s_par%gx(3)
-  write(11,'(f6.2,i11,f8.2,4i5,3f8.2,a1,a14,a5,a6,i3)') log10(dble(lxyztot)),       &
+  write(11,'(f6.2,i11,f8.2,4i5,3f8.2,5a,i3,3f7.3)') log10(dble(lxyztot)),       &
             & int(s_par%gx(1)*s_par%gx(2)*s_par%gx(3),4),real(meas%mlups,4),    &
             & int(s_par%gx(1),2),int(s_par%gx(2),2), int(s_par%gx(3),2),                                             &
             & int(prc%size,2),meas%mean_total,meas%mean_comm,meas%mean_comm/meas%mean_total*100.,' ',            &
-            & s_par%comm_method,s_par%layoutname,s_par%modelname,result_state
+            & s_par%comm_method,s_par%layoutname," ",s_par%modelname,result_state,s_par%omega,s_par%bulkViscosity,s_par%umax
   close(11)
 end subroutine write_performance_results
 !------------------------------------------------------------------------
@@ -727,14 +754,14 @@ end subroutine write_performance_results
 subroutine write_temp_data(tStep,nr_unit,size_x,size_y,size_z,size_nnod,fIn,limit_x,limit_y,limit_z,sx,sy,sz)
 
    integer, intent(in) :: nr_unit,size_x,size_y,size_z,size_nnod,tStep,limit_x,limit_y,limit_z,sx,sy,sz
-   real(R8B), intent(in)    :: fIn(LB_NODE(size_nnod,0:size_x+1,0:size_y+1,0:size_z+1))
+   real(R8B), intent(in)    :: fIn(NDX(size_nnod,0:size_x+1,0:size_y+1,0:size_z+1))
    integer             :: i,j,k,l
    write(nr_unit,*) "Timestep",tStep
    do k=sz,limit_z
       do j=sy,limit_y
          do i=sx,limit_x
             do l=1,size_nnod
-               write(nr_unit,'(3i3,f23.10)') i+1-sx,j+1-sy,k+1-sz,fIn(LB_NODE(l,i,j,k))
+               write(nr_unit,'(3i3,f23.10)') i+1-sx,j+1-sy,k+1-sz,fIn(NDX(l,i,j,k))
             end do 
          end do 
       end do
@@ -764,6 +791,10 @@ subroutine  dealloc_mem(lb_dom,s_par)
       if(alloc_stat /=0) write(*,*) "Error deallocating lb_dom%gu"
    deallocate(lb_dom%grho,stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) "Error deallocating lb_dom%grho"
+#ifdef CRVP
+   deallocate(lb_dom%grho_inc,stat=alloc_stat)
+      if(alloc_stat /=0) write(*,*) "Error deallocating lb_dom%grho_inc"
+#endif /* CRVP */
    deallocate(lb_dom%gstate,stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) "Error deallocating lb_dom%g_state"
 #ifdef SPONGE
@@ -779,14 +810,14 @@ subroutine  dealloc_mem(lb_dom,s_par)
 #endif /* INIT_WITH_ROOT */
    deallocate(lb_dom%obs,stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) "Error deallocating obs       "
-!   deallocate(lb_dom%obs_sponge,stat=alloc_stat)
-!      if(alloc_stat /=0) write(*,*) "Error deallocating obs_sponge"
-!   deallocate(lb_dom%obs_reset,stat=alloc_stat)
-!      if(alloc_stat /=0) write(*,*) "Error deallocating obs_reset "
    deallocate(lb_dom%obs_nrwall,stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) "Error deallocating obs_nrwall"
    deallocate(lb_dom%nrwall_0val,stat=alloc_stat)
-      if(alloc_stat /=0) write(*,*) "Error deallocating nr_wall0val"
+      if(alloc_stat /=0) write(*,*) "Error deallocating nrwall_0val"
+   deallocate(lb_dom%nrwall_prev,stat=alloc_stat)
+      if(alloc_stat /=0) write(*,*) "Error deallocating nrwall_prev"
+!   deallocate(lb_dom%nrfplus,stat=alloc_stat)
+!      if(alloc_stat /=0) write(*,*) "Error deallocating nrfplus    "
 
    deallocate(lb_dom%fIn,stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) "Error deallocating lb_dom%fin "
@@ -800,6 +831,10 @@ if(s_par%tInitial > 0) then
 endif
    deallocate(lb_dom%rho,stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) "Error deallocating lb_dom%rho"
+#ifdef CRVP
+   deallocate(lb_dom%rho_inc,stat=alloc_stat)
+      if(alloc_stat /=0) write(*,*) "Error deallocating lb_dom%rho_inc"
+#endif /* CRVP */
    deallocate(lb_dom%state,stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) "Error deallocating lb_dom%state"
 #ifdef SPONGE
@@ -1084,12 +1119,16 @@ subroutine alloc_mem(lb_dom,s_par,prc)
 
 #ifdef INIT_WITH_ROOT
    if(prc%rk == 0) then
-      allocate(lb_dom%gu(LB_NODE(NDIM,s_par%gx(1),s_par%gx(2),s_par%gx(3))),stat=alloc_stat)
+      allocate(lb_dom%gu(NDX(NDIM,s_par%gx(1),s_par%gx(2),s_par%gx(3))),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%gu"
-      allocate(lb_dom%gfIn(LB_NODE(nnod,s_par%gx(1),s_par%gx(2),s_par%gx(3))),stat=alloc_stat)
+      allocate(lb_dom%gfIn(NDX(nnod,s_par%gx(1),s_par%gx(2),s_par%gx(3))),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%gfIn"
       allocate(lb_dom%grho(s_par%gx(1),s_par%gx(2),s_par%gx(3)),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%grho"
+#ifdef CRVP
+      allocate(lb_dom%grho_inc(s_par%gx(1),s_par%gx(2),s_par%gx(3)),stat=alloc_stat)
+      if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%grho_inc"
+#endif /* CRVP */
       allocate(lb_dom%gstate(s_par%gx(1),s_par%gx(2),s_par%gx(3)),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%g_state"
       allocate(s_par%g_x(s_par%gx(1)),stat=alloc_stat)
@@ -1103,12 +1142,16 @@ subroutine alloc_mem(lb_dom,s_par,prc)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%gsponge"
 #endif /* SPONGE */
    else 
-      allocate(lb_dom%gu(LB_NODE(1,1,1,1)),stat=alloc_stat)
+      allocate(lb_dom%gu(NDX(1,1,1,1)),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%gu"
-      allocate(lb_dom%gfIn(LB_NODE(1,1,1,1)),stat=alloc_stat)
+      allocate(lb_dom%gfIn(NDX(1,1,1,1)),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%gfIn"
       allocate(lb_dom%grho(1,1,1),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%grho"
+#ifdef CRVP
+      allocate(lb_dom%grho_inc(1,1,1),stat=alloc_stat)
+      if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%grho_inc"
+#endif /* CRVP */
       allocate(lb_dom%gstate(1,1,1),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%g_state"
 #ifdef SPONGE
@@ -1124,21 +1167,25 @@ subroutine alloc_mem(lb_dom,s_par,prc)
 #endif
 
    if(prc%rk==0) call calc_mem(prc,lb_dom,s_par)
-   allocate(lb_dom%fOut(LB_NODE(nnod,0:(lx+1),0:(ly+1),0:(lz+1))),stat=alloc_stat)
+   allocate(lb_dom%fOut(NDX(nnod,0:(lx+1),0:(ly+1),0:(lz+1))),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%fOut"
 
 !   if(associated(lb_dom%fOut)) write(*,*) "fOut OK"
 
 if(s_par%tInitial > 0) then
-   allocate(lb_dom%u0(  LB_NODE(NDIM,0:(lx+1),0:(ly+1),0:(lz+1))),stat=alloc_stat)
+   allocate(lb_dom%u0(  NDX(NDIM,0:(lx+1),0:(ly+1),0:(lz+1))),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%u0 "
 endif
 
-   allocate(lb_dom%u(  LB_NODE(NDIM,0:(lx+1),0:(ly+1),0:(lz+1))),stat=alloc_stat)
+   allocate(lb_dom%u(  NDX(NDIM,0:(lx+1),0:(ly+1),0:(lz+1))),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%u  "
 !   if(allocated(lb_dom%u)) write(*,*) "u OK"
    allocate(lb_dom%rho(0:(lx+1),0:(ly+1),0:(lz+1)),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%rho"
+#ifdef CRVP
+   allocate(lb_dom%rho_inc(0:(lx+1),0:(ly+1),0:(lz+1)),stat=alloc_stat)
+      if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%grho_inc"
+#endif /* CRVP */
    allocate(lb_dom%state(lx,ly,lz),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%state"
 #ifdef SPONGE
@@ -1151,7 +1198,7 @@ endif
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%y  "
    allocate(lb_dom%z(lz),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%z  "
-   allocate(lb_dom%fIn(LB_NODE(nnod,0:(lx+1),0:(ly+1),0:(lz+1))),stat=alloc_stat)
+   allocate(lb_dom%fIn(NDX(nnod,0:(lx+1),0:(ly+1),0:(lz+1))),stat=alloc_stat)
       if(alloc_stat /=0) write(*,*) prc%rk,"Error allocating lb_dom%fIn"
 end subroutine alloc_mem 
 

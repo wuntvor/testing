@@ -10,6 +10,7 @@ module nrt_lib
 #endif
 #endif
     integer(4), parameter :: MAXDIMS=3
+    integer, parameter :: dEAST=1,dWEST=3,dNORTH=2,dSOUTH=4,dTOP=5,dBOTTOM=6
 
     integer, parameter :: I2B = selected_int_kind(2)
     integer, parameter :: I4B = selected_int_kind(4)
@@ -22,7 +23,8 @@ module nrt_lib
    integer, parameter                  :: gaussian=4,cavity_same=5,flute=6
    integer, parameter                  :: corotating_vortex=7,cylinder_impulse=8
    integer, parameter                  :: caa_cavity=9,plate_trail=10,taylor_vortex=11
-   integer, parameter                  :: gauss_convect=12,planar_standing_wave=13 
+   integer, parameter                  :: gauss_convect=12,planar_standing_wave=13
+   integer, parameter                  :: channel=14,gauss1d=15
    integer, parameter                  :: fluid=0,wall=4,inlet=1,outlet=2
    ! special bcs including lid, non reflecting bc
    integer, parameter                  :: lid=3,sponge_wall=5,reset_wall=6,nr_wall=7
@@ -37,7 +39,7 @@ module nrt_lib
    integer,target       :: gtstep_cur 
 
    type sim_parameter
-      real(R8B) :: rho0
+      real(R8B) :: rho0,bulkViscosity
       integer :: problem
       integer :: sponge_size ! thickness of sponge layer 
       ! description which models etc.
@@ -45,6 +47,7 @@ module nrt_lib
       character*16         :: problem_name
       character(len=4)     :: layoutname
       character(len=16)     :: modelname
+      character(len=16)     :: obsFilename
       ! position of obstacle 
       integer         :: obst_x,obst_y,obst_z,obst_r
       ! max iteration, interval of output
@@ -55,8 +58,11 @@ module nrt_lib
       real(R8B)            :: rhoges,lchar,obst_l
       ! number of Obstacles. Will be assigned in read_params
       integer         :: nObs
-      logical         :: setObstacles,save_output      
+      logical         :: setObstacles,save_output,read_obs
       logical         :: goend,initial 
+      logical         :: calc_rho_inc 
+      integer         :: crvp_period,crvp_av_start 
+      logical         :: periodic(3)   
       integer         :: gx(3)
       ! global dimensions of domain
 #ifdef F2003_ALLOC_DERIVED_TYPE
@@ -85,8 +91,19 @@ module nrt_lib
       real(R8B)            :: mem,mem_thread,mem_master
    end type measure
 
-   integer, parameter :: glob_nnghb = 18 !number of neighbors, is copied into prc%nnghb !CHANGED_REDUCE_MPI was 18
-   integer, parameter :: rdcd_ngh = 6 !number of reduced neighbors
+#ifdef D3Q19
+!number of neighbors, is copied into prc%nnghb 
+   integer, parameter :: glob_nnghb = 18
+!number of reduced neighbors 18 
+   integer, parameter :: rdcd_ngh = 6
+#else /* D2Q9 */
+!number of neighbors, is copied into prc%nnghb 
+   integer, parameter :: glob_nnghb = 8 
+!number of reduced neighbors 18 
+   integer, parameter :: rdcd_ngh = 4
+
+#endif
+
    integer, parameter :: n_ghost = 1     !number of ghost layers. is copied into prc%n_ghost_nodes
 
    type lb_block
@@ -95,67 +112,54 @@ module nrt_lib
       ! densities fIn, equilibrium densities, macr. speed
       ! macr. density
       integer :: nobs                            ! number of obstacles
-!      integer :: nobs_sponge                     ! number of obstacles in sponge layer
       integer :: nnr_wall                        ! number of non-reflecting boundary nodes
-!      integer :: nobs_reset                      ! number of obstacles in sponge layer
       integer :: nper_wall                       ! number of periodic boundary nodes  
 #ifdef F2003_ALLOC_DERIVED_TYPE
-!      real(R8B),dimension(:,:,:,:), allocatable,target :: fOut,u,u0
       real(R8B),dimension(:,:,:,:), allocatable :: u,u0
       real(R8B),dimension(:,:,:,:), pointer :: fOut => NULL()
       real(R8B),dimension(:,:,:),   allocatable :: rho
+#ifdef SPONGE
       real(R8B),dimension(:,:,:),   allocatable :: omega,gomega
+#endif /* SPONGE */ 
       integer,dimension(:,:,:),allocatable      :: state
       integer,dimension(:,:),allocatable        :: obs  ! obstacle vector
-      integer,dimension(:,:),allocatable        :: obs_sponge  ! obstacle vector
       integer,dimension(:,:),allocatable        :: obs_nrwall  ! obstacle vector
       integer,dimension(:,:),allocatable        :: obs_per  ! periodic vector
-!      real(R8B),dimension(:,:),allocatable        :: per_val      ! 0 values for nrbc
-      real(R8B),dimension(:,:),allocatable        :: nrwall_0val  ! 0 values for nrbc
-      integer,dimension(:,:),allocatable        :: obs_reset   ! obstacle vector
-      ! global variables, only needed when INIT_WITH_ROOT is set
+      real(R8B),dimension(:,:),allocatable      :: nrwall_0val  ! 0 values for nrbc
+      real(R8B),dimension(:,:),allocatable      :: nrwall_prev  ! 0 values for nrbc
+#ifdef INIT_WITH_ROOT
       real(R8B),dimension(:,:,:),   allocatable :: grho
       real(R8B),dimension(:,:,:,:), allocatable :: gfIn, gu
       integer,dimension(:,:,:),allocatable      :: gstate
+#endif /* INIT_WITH_ROOT */
       ! coordinates
       real(R8B), dimension(:),allocatable      :: x,y,z
-      ! refinement levels 
-!#ifdef REFINE
-!      integer,dimension(:,:,:),allocatable :: rfn_state
-!      integer :: level
-!      type(lb_block),pointer :: children(:) => NULL() 
-!      integer,dimension(:,:,:),allocatable :: interpolate_children
-!      type(lb_block),pointer :: parent => NULL() 
-!      integer,dimension(:,:,:),allocatable :: interpolate_parent
-!#endif /* REFINE */
-!      real(R8B),allocatable,target  :: fIn(:,:,:,:)
       real(R8B),pointer  :: fIn(:,:,:,:) => NULL()
 #else /* F2003_ALLOC_DERIVED_TYPE */
-      real(R8B),dimension(:,:,:,:), pointer :: fOut => NULL() , u => NULL() , u0 => NULL() 
-      real(R8B),dimension(:,:,:),   pointer :: rho => NULL() 
-      real(R8B),dimension(:,:,:),   pointer :: omega => NULL() ,gomega => NULL() 
+      real(R8B),dimension(:,:,:,:), pointer :: fOut => NULL(), u => NULL(), u0 => NULL() 
+      real(R8B),dimension(:,:,:),   pointer :: rho  => NULL(), rho_inc => NULL() 
+#ifdef SPONGE
+      real(R8B),dimension(:,:,:),   pointer :: omega => NULL(), gomega => NULL() 
+#endif /* SPONGE */
       integer,dimension(:,:,:),pointer      :: state => NULL() 
       integer,dimension(:,:),pointer        :: obs => NULL()   ! obstacle vector
-!      integer,dimension(:,:),pointer        :: obs_sponge => NULL()   ! obstacle vector
       integer,dimension(:,:),pointer        :: obs_nrwall => NULL()   ! obstacle vector
       integer,dimension(:,:),pointer        :: obs_per => NULL()   ! periodic vector
-!      real(R8B),dimension(:,:),pointer      :: per_val => NULL()       ! 0 values for nrbc
       real(R8B),dimension(:,:),pointer      :: nrwall_0val => NULL()   ! 0 values for nrbc
-!      integer,dimension(:,:),pointer        :: obs_reset => NULL()   ! obstacle vector
-      ! global variables, only needed when INIT_WITH_ROOT is set
-      real(R8B),dimension(:,:,:),   pointer :: grho => NULL() 
-      real(R8B),dimension(:,:,:,:), pointer :: gfIn => NULL() , gu => NULL() 
+      real(R8B),dimension(:,:),pointer      :: nrwall_prev => NULL()   ! 0 values for nrbc
+#ifdef INIT_WITH_ROOT
+      real(R8B),dimension(:,:,:),   pointer :: grho => NULL(), grho_inc => NULL() 
+      real(R8B),dimension(:,:,:,:), pointer :: gfIn => NULL(), gu => NULL() 
       integer,dimension(:,:,:),pointer      :: gstate => NULL() 
+#endif /* INIT_WITH_ROOT */
       ! coordinates
-      real(R8B), dimension(:),pointer       :: x => NULL() ,y => NULL() ,z => NULL() 
-      real(R8B),pointer      :: fIn(:,:,:,:) => NULL() 
+      real(R8B), dimension(:),pointer       :: x => NULL(), y => NULL() ,z => NULL() 
+      real(R8B),pointer                     :: fIn(:,:,:,:) => NULL() 
 #endif /* F2003_ALLOC_DERIVED_TYPE */
-
 
    end type lb_block
 
    integer :: send_dat(rdcd_ngh),recv_dat(rdcd_ngh) ! why do handles inside prc create errors??
-
 
    type mpl_var
 #ifdef USE_CAF
@@ -202,9 +206,7 @@ module nrt_lib
 #ifdef USE_ADCL
       integer                  :: adcl_vmap, adcl_vec_fIn, adcl_vec_fOut, adcl_topo, & 
                                   adcl_request_fIn, adcl_request_fOut, adcl_active_req
-!      real(R8B),allocatable    :: adcl_data(:,:,:,:)
       real(R8B),pointer        :: adcl_data(:,:,:,:) => NULL() 
-!#!endif
 #endif /* USE_ADCL */
 #endif /* USE_MPI */
       ! number of mpi-processes in each cartesian direction
@@ -223,13 +225,13 @@ module nrt_lib
    type mpl_buf
       integer          :: idx_len
 #ifdef F2003_ALLOC_DERIVED_TYPE
-      integer,allocatable          :: idx(:)
-      integer,allocatable          :: idx_recv(:)
+      integer,  allocatable :: idx(:)
+      integer,  allocatable :: idx_recv(:)
       real(R8B),allocatable :: send(:,:,:,:) 
       real(R8B),allocatable :: recv(:,:,:,:) 
 #else
-      integer,pointer              :: idx(:) => NULL() 
-      integer,pointer              :: idx_recv(:) => NULL() 
+      integer,  pointer     :: idx(:) => NULL() 
+      integer,  pointer     :: idx_recv(:) => NULL() 
       real(R8B),pointer     :: send(:,:,:,:)  => NULL() 
       real(R8B),pointer     :: recv(:,:,:,:)  => NULL() 
 #endif

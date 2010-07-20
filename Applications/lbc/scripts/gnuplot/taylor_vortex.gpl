@@ -1,7 +1,7 @@
 set hidden3d
 set isosamples 40
-x0=0
-y0=0
+x0=10
+y0=10
 radius=5.
 a=radius*sqrt(2.)
 phi0=1.0

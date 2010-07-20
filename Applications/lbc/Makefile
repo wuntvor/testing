@@ -24,14 +24,18 @@ HPC_TYPE=nehalem
 # Compiler:
 
 # Add _debug for debugging
-#COMPILER=gnu_debug
+#COMPILER=gnu
 #COMPILER=sx
 #COMPILER=vampir
+#COMPILER=intel_debug
 COMPILER=intel
 #COMPILER=ibmxl
 #COMPILER=pgi_debug
 #COMPILER=cray
 #COMPILER=g95
+
+
+
 
 # IBM Compiler: Pass Arguments with additional switch -wf,-D...
 ifeq ($(findstring ibmxl,$(COMPILER)),ibmxl) 
@@ -49,11 +53,11 @@ endif
 # For parallel either use USE_MPI with suboptions or use USE_CAF
 PARALLEL += $(FDEF)-DUSE_MPI    # Activate MPI:              
 #PARALLEL += $(FDEF)-DDEBUG_MPI 
-PARALLEL += $(FDEF)-DVERBOSE   # Output detailed information about parallel execution 
+#PARALLEL += $(FDEF)-DVERBOSE   # Output detailed information about parallel execution 
 # MPI Method
 #PARALLEL += $(DEF)-DPERSISTENT   # Persistent MPI Communication. Must be used together with BUFFER_EACH 
-PARALLEL += $(DEF)-DPERSISTENT2   # Persistent MPI Communication. Must be used together with BUFFER_EACH 
-#PARALLEL += $(FDEF)-DISEND_IRECV       # use MPI_IRECV and MPI_ISEND
+#PARALLEL += $(DEF)-DPERSISTENT2   # Persistent MPI Communication. Must be used together with BUFFER_EACH 
+PARALLEL += $(FDEF)-DISEND_IRECV       # use MPI_IRECV and MPI_ISEND
 #PARALLEL += $(FDEF)-DSENDRECV          # use MPI_SENDRECV
 
 # MPI options
@@ -77,18 +81,33 @@ PARALLEL += $(FDEF)-DCOMM_REDUCED      # Only Exchange necessary densities
 # Lattice Boltzmann Model: 
 # Choose ONE of the following
 # 2D:  use two-dimensional model with nine velocities
-#LBMODEL += $(FDEF)-DD2Q9
+LBMODEL += $(FDEF)-DD2Q9
 # 3D:  use three-dimensional model with nineteen velocities
-LBMODEL += $(FDEF)-DD3Q19
+#LBMODEL += $(FDEF)-DD3Q19
 
 # Relaxation modes (optional)
 # Standard is BGK
+
 # MRT: multi-relaxation time model (not working yet)
 #LBMODEL += $(FDEF)-DMRT
-#LBMODEL += $(FDEF)-DMRT_SIRANN
+#LBMODEL += $(FDEF)-DTEST_MRT
+# Check mass and momentum conservation in MRT routine
+#LBMODEL += $(FDEF)-DMRT_MASS_MOMENTUM
+#LBMODEL += $(FDEF)-DMRT_BGK_PARAMS
+# Debug option with sample data for the MRT routine
 #LBMODEL += $(FDEF)-DCHECK_MRT
+
+# Use the incompressible model for higher stability
+#LBMODEL += $(FDEF)-DINCOMPRESSIBLE
+#LBMODEL += $(FDEF)-DSPONGE
+# Use the turbulence model LES Smagorinsky for higher Reynolds numbers
+#LBMODEL += $(FDEF)-DLES_SMAGORINSKY
+#LBMODEL += $(FDEF)-DDEBUG_LES
 # TRT: two-relaxation time mode
 #LBMODEL += $(FDEF)-DTRT
+
+#Special options for co-rotating vortex pair (averaging)
+#LBMODEL += $(FDEF)-DCRVP
 
 # Performance issues (optional)
 # Combine stream and collide routine, split relaxation 
@@ -103,8 +122,9 @@ LBMODEL += $(FDEF)-DLAYOUT_IJKL
 #LBMODEL += $(FDEF)-DLAYOUT_LIJK
 
 # Initialization of geometry and boundaries (for parallel execution)
-LBMODEL += $(FDEF)-DINIT_WITH_ROOT  #  First process assigns geometry and distributes to other processes
-#                   Gathers data to output from other processes
+#  First process assigns geometry and distributes to other processes
+#  Gathers data to output from other processes
+LBMODEL += $(FDEF)-DINIT_WITH_ROOT  
 #
 # Timestep information
 #LBMODEL += $(FDEF)-DWRITE_TSTATUS=2 #    Write info about the timestep duration every ith step
@@ -113,9 +133,6 @@ LBMODEL += $(FDEF)-DINIT_WITH_ROOT  #  First process assigns geometry and distri
 #LBMODEL += $(FDEF)-DCHECK_CAF
 LBMODEL += $(FDEF)-DTEC_OUT # Write Tecplot Binary output 
 #LBMODEL += $(FDEF)-DVERBOSE # write out extra information 
-#LBMODEL += $(FDEF)-DSPONGE
-#LBMODEL += $(FDEF)-DPROP_PUSH
-#LBMODEL += $(FDEF)-DSLIP_BB # free slip boundary condition (not working at all, only dirty fix for x-direction flow)
 
 
 CPPDEFINES=$(LBMODEL) $(PARALLEL)
@@ -206,7 +223,7 @@ cflags_debug= -i4 -r8 -Mpreprocess -C -g -Mbounds,chkptr,dclchk -O0
       #F90_CFLAGS_DEBUG+=-warn alignments,declarations,errors,general,ignore_loc,interfaces,truncated_source,uncalled,nounused,usage
 
       F90_CFLAGS_OPT=-fpp -r8 -i4 -O3 -i-dynamic 
-      F90_LFLAGS_OPT=-r8 -i4 -O3 -i-dynamic 
+      F90_LFLAGS_OPT=-r8  -i4 -O3 -i-dynamic 
       #--------------------------------
       # PROFILING 
       ifeq ($(findstring profile,$(COMPILER)),profile)
@@ -227,7 +244,7 @@ cflags_debug= -i4 -r8 -Mpreprocess -C -g -Mbounds,chkptr,dclchk -O0
       COMP=g95   
       CCOMP=mpicc
 
-      F90_CFLAGS_DEBUG=-xf95-cpp-input -O0 -g -fbounds-check -Wall -pedantic
+      F90_CFLAGS_DEBUG=-xf95-cpp-input -O0 -g -fbounds-check -Wall
       F90_LFLAGS_DEBUG=-O0 -g -fbounds-check -Wall -pedantic
 
       F90_CFLAGS_OPT=-std=f2003 -O3
@@ -240,6 +257,14 @@ cflags_debug= -i4 -r8 -Mpreprocess -C -g -Mbounds,chkptr,dclchk -O0
          F90_CFLAGS_OPT+=-pg
          F90_LFLAGS_OPT+=-pg
       endif
+   endif
+
+#--------------------------------
+# Marmot
+
+   ifeq ($(findstring marmot,$(COMPILER)),marmot)
+      COMP=marmotf90
+      CCOMP=marmotcc
    endif
 
 #--------------------------------
@@ -366,6 +391,15 @@ cflags_debug= -i4 -r8 -Mpreprocess -C -g -Mbounds,chkptr,dclchk -O0
       F90_LFLAGS_OPT= -i4 -r8 -fast -fastsse -Minfo,ipa -O4
    endif
 
+#--------------------------------
+# Scalasca: simply add scalasca -instrument before command
+
+   ifeq ($(findstring scalasca,$(COMPILER)),scalasca)
+      COMP=scalasca -instrument $(COMP) 
+      CCOMP=scalasca -instrument $(CCOMP) 
+   endif
+
+
    ifeq ($(findstring cray,$(HPC_TYPE)),cray) 
       COMP=ftn
    endif
@@ -453,7 +487,8 @@ endif
 # ------
 SHELL=/bin/bash
 
-sources := nrt_lib.F90 timing.F90 lbmodel.F90 tools.F90 mpl_set.F90 function_set.F90 lbm_functions.F90 
+sources := nrt_lib.F90 timing.F90 lbmodel.F90 tools.F90 mpl_set.F90
+sources += function_set.F90 lb_geo.F90 lb_init.F90 lb_bc.F90 lbm_functions.F90 
 ifeq ($(USE_PARAMESH),1)
    sources += amr_1blk_bcset.F90 amr_initial_soln.F90 amr_test_refinement.F90 advance_soln.F90 amr_timestep.F90  
 endif
@@ -544,12 +579,18 @@ clean:
 	@echo '==============================================================='
 
 cleanall:
-	- rm -f *.o *.mod *.i lbc
+	- rm -f *.o *.mod *.i *.i90 lbc
 	for dir in amr_headers amr_mpi_source amr_source; do \
 	$(MAKE) -C ./$$dir -f Makefile.gnu clean; \
 	done
 	@echo '==============================================================='
 	@echo '=  c l e a n e d     u p    a l l                             ='
+	@echo '==============================================================='
+
+cleandata:
+	- rm -f *.plt *.res *.inf fort.* 
+	@echo '==============================================================='
+	@echo '=  c l e a n e d     d a t a                                  ='
 	@echo '==============================================================='
 
 touch:
@@ -574,6 +615,8 @@ touch:
 (tools.o): (nrt_lib.o) (lbmodel.o) 
 (mpl_set.o): (nrt_lib.o) (lbmodel.o) (tools.o) 
 (function_set.o): (nrt_lib.o) (timing.o) (lbmodel.o) (mpl_set.o) 
-(lbm_functions.o): (nrt_lib.o) (timing.o) (lbmodel.o) (mpl_set.o)
+(init.o): (nrt_lib.o) (timing.o) (lbmodel.o) (mpl_set.o) (lb_geo.o)
+(lb_bc.o): (nrt_lib.o) (timing.o) (lbmodel.o) (mpl_set.o) (lb_geo.o)
+(lbm_functions.o): (nrt_lib.o) (timing.o) (lbmodel.o) (mpl_set.o) (lb_geo.o) (lb_bc.o)
 (lbc.o): (nrt_lib.o) (timing.o) (lbmodel.o) (mpl_set.o) (lbm_functions.o) (function_set.o) 
 #(amr_initial_soln.o) (amr_1blk_bcset.o)

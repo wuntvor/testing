@@ -23,6 +23,9 @@ module LBMODEL
    data cx(:,2) / 0,0,1,0,-1,1,1,-1,-1/
    data cx(:,3) / 0,0,0,0, 0,0,0, 0, 0/
 
+   integer, parameter :: I__0= 1,I__E= 2,I__N= 3,I__W= 4,I__S= 5
+   integer, parameter :: I_NE= 6,I_NW= 7,I_SW= 8,I_SE= 9
+
    ! 1  0     6  NE  
    ! 2  E     7  NW
    ! 3  N     8  SW
@@ -50,6 +53,10 @@ module LBMODEL
    data cx(:,1) /0, 1,-1, 0, 0, 0, 0, 1,-1, 1,-1, 1,-1, 1,-1, 0, 0, 0, 0/ 
    data cx(:,2) /0, 0, 0, 1,-1, 0, 0, 1,-1,-1, 1, 0, 0, 0, 0, 1,-1, 1,-1/
    data cx(:,3) /0, 0, 0, 0, 0, 1,-1, 0, 0, 0, 0, 1,-1,-1, 1, 1,-1,-1, 1/
+
+   integer, parameter :: I__0= 1,I__E= 2,I__W= 3,I__N= 4,I__S= 5,I__T= 6,I__B= 7
+   integer, parameter :: I_NE= 8,I_SW= 9,I_SE=10,I_NW=11,I_TE=12,I_BW=13,I_BE=14
+   integer, parameter :: I_TW=15,I_TN=16,I_BS=17,I_BN=18,I_TS=19
 
    ! According to ILBDC ordering
    ! 1  0           8  NE y+x+         15  TW z+x-

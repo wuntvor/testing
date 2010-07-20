@@ -14,9 +14,6 @@
 !
 !------------------------------------------------------------------------
 !
-! 2do:
-! - trt is more instable than bgk!! Why? 
-! - nrbc show fluctuations when velocity is /= 0
 !
 ! - MRT Model parameter was tuned, so that bulk viscosity is set equal to bgk. Watch parameter s1 s_mrt(2) 
 !
@@ -26,6 +23,7 @@ PROGRAM lbmain
    use mpl_lib
    use lbmodel
    use lbm_functions
+   use lb_bc
    use mpl_set
    use function_set
    use tools
@@ -43,6 +41,7 @@ PROGRAM lbmain
    type(mpl_var)        :: prc
    real(R8B)            :: total_start,total_end
    integer              :: tStep,countOut,result_state
+   integer              :: i,j,k
    integer,pointer      :: tstep_cnt 
    logical              :: stop_request    
    real(R8B),pointer,dimension(:,:,:,:) :: pnt_cur,pnt_nxt
@@ -72,19 +71,16 @@ PROGRAM lbmain
 !------------------------------------------------------------------------
 ! Initialize data and distribute to processes
 !
-! reset all values of the local fIn to fEq
-! This is just a dirty hack, so that the output results are more homogeneous
-! (solid nodes are also written out, but should be blanked)
-
 #ifdef D2Q9
-   lb_dom%fIn(LB_NODE(1,:,:,:))=0.4444444444444
-   lb_dom%fIn(LB_NODE(2:5,:,:,:))=0.111111111111
-   lb_dom%fIn(LB_NODE(6:9,:,:,:))=0.02777777777777
+   lb_dom%fIn(NDX(1,:,:,:))=0.4444444444444d0
+   lb_dom%fIn(NDX(2:5,:,:,:))=0.111111111111d0
+   lb_dom%fIn(NDX(6:9,:,:,:))=0.02777777777777d0
 #else
-   lb_dom%fIn(LB_NODE(1,:,:,:))=0.33333333333333
-   lb_dom%fIn(LB_NODE(2:7,:,:,:))=0.0555555555555
-   lb_dom%fIn(LB_NODE(8:19,:,:,:))=0.02777777777777
+   lb_dom%fIn(NDX(1,:,:,:))=0.33333333333333d0
+   lb_dom%fIn(NDX(2:7,:,:,:))=0.0555555555555d0
+   lb_dom%fIn(NDX(8:19,:,:,:))=0.02777777777777d0
 #endif
+!   lb_dom%fIn  = -10.d0
    lb_dom%fOut = lb_dom%fIn
 
 
@@ -94,7 +90,7 @@ PROGRAM lbmain
 #ifdef INIT_WITH_ROOT
    if(prc%rk==0) then
       call get_geo(lb_dom,s_par,prc)
-      call init_field(lb_dom%gfIn,lb_dom%gu,lb_dom%grho,lb_dom%gstate,s_par)
+      call init_field(lb_dom%gfIn,lb_dom%gu,lb_dom%grho,lb_dom%gstate,s_par,lb_dom,prc)
       call calc_fEq_global(lb_dom%grho,lb_dom%gu,lb_dom%gfIn,s_par) ! reset complete domain to eq
    end if
 
@@ -105,14 +101,16 @@ PROGRAM lbmain
 #else
    call get_geo_each(lb_dom,s_par,prc)
    call init_field_each(lb_dom,s_par,prc)
-   call calc_fEq(lb_dom,lb_dom%rho,lb_dom%u,lb_dom%fIn,0,0,0,0,0,0)
+   call calc_fEq(lb_dom,lb_dom%rho,lb_dom%u,lb_dom%fIn,0,0,0,0,0,0,s_par)
 #endif
    !---------------------------
    ! Initialize the obstacle and boundary vectors 
    call init_vector(lb_dom,s_par,prc)
 
    call ramp_u(s_par,0)
+
    call set_bnd(lb_dom,lb_dom%state,lb_dom%fIn,lb_dom%rho,lb_dom%u,s_par,prc,meas,0)
+
 
    call cpu_time_measure(meas%tEnd)
    meas%init_duration = real(meas%tEnd,8) - real(meas%tStart,8)
@@ -126,6 +124,8 @@ PROGRAM lbmain
 
    tstep_cnt = 0 
    do tStep = 1,s_par%tMax
+   pnt_nxt => lb_dom%fIn
+
       call cpu_time_measure(meas%tStart)
       !---------------------------
       ! Set Boundaries on fIn  
@@ -156,13 +156,11 @@ PROGRAM lbmain
       pnt_nxt => lb_dom%fOut
 #endif
 
-
       !---------------------------
       ! Exchange between domains 
       if(prc%size > 1) then
          call mpl_exchange(lb_dom,pnt_cur,prc,meas)
       end if
-
 !if(s_par%initial ) then
 !#ifndef COMBINE_STREAM_COLLIDE
 !      call propagate(lb_dom,pnt_nxt,pnt_cur,lb_dom%state,meas)
@@ -186,10 +184,13 @@ PROGRAM lbmain
       ! Propagation fIn => fOut 
       call propagate(lb_dom,pnt_nxt,pnt_cur,lb_dom%state,meas)
 
+      ! pnt_nxt : fOut: post-propagation, pnt_cur: fIn: post-collision
+
+      call set_nrbc_antibb(lb_dom,pnt_nxt,pnt_cur,s_par,prc,meas)
+      call set_bnd(lb_dom,lb_dom%state,pnt_nxt,lb_dom%rho,lb_dom%u,s_par,prc,meas,tStep)
+
       pnt_nxt => lb_dom%fIn
       pnt_cur => lb_dom%fOut
-
-      call bounceback(lb_dom,pnt_nxt,pnt_cur,meas)
 
       !---------------------------
       ! Collision routine fOut => fIn, excluding solid nodes 
@@ -203,11 +204,8 @@ PROGRAM lbmain
 #endif
 #endif
 #endif
+
 !endif
-
-      call set_bnd(lb_dom,lb_dom%state,pnt_nxt,lb_dom%rho,lb_dom%u,s_par,prc,meas,tStep)
-
-
 
       call cpu_time_measure(meas%tEnd)
       meas%duration = meas%duration + real(meas%tEnd,8) - real(meas%tStart,8)
@@ -218,7 +216,7 @@ PROGRAM lbmain
          ! calc macroscopic values (is also done in do_kinetic)
          call calc_macr_vals(lb_dom,lb_dom%u,lb_dom%rho,pnt_nxt,meas)
          countOut=countOut+1
-         call calc_rho_ges(lb_dom,pnt_cur,s_par%rhoges,tStep,prc)
+         call calc_rho_ges(lb_dom,pnt_nxt,s_par%rhoges,tStep,prc)
          if(tStep > s_par%tMax-s_par%tOut  ) s_par%goend=.true. 
          if(result_state == -1) s_par%goend=.true. 
          if(stop_request .eqv. .true.) s_par%goend=.true. 
@@ -230,7 +228,9 @@ PROGRAM lbmain
 
          ! Check for errors. If errors true, then exit after next iteration
          if(result_state == 0) then
+            if(s_par%initial .eqv. .false.) &
             call check_density(lb_dom,tStep,result_state,prc%rk)
+            call comm_res(result_state,prc)
          elseif(result_state ==-1 .and. s_par%goend .eqv. .true.) then
             write(*,*) "Result is errorous. Exiting..."
             exit 
